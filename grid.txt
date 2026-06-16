@@ -1,0 +1,17 @@
+Created a new SeamlessGridPanel class that:
+Renders sprites directly in a grid with no spacing between them
+Implements mouse hover effects for improved UI feedback
+Shows item IDs with a semi-transparent background for better readability
+Uses efficient viewport rendering that only draws visible items
+Includes the progressive loading system with progress bar for large tilesets
+Added a new BRUSHLIST_SEAMLESS_GRID option to the brush list types:
+Can be selected via settings with "seamless grid" option
+Supports direct selection without using the checkbox toggle
+Updated the BrushPanel to support the new seamless grid:
+The "Grid View" checkbox now creates a SeamlessGridPanel
+Added support for the new option in the list type settings
+Improved rendering efficiency:
+Only renders sprites in the visible viewport plus a small margin
+Uses lazy loading with a progress indicator for large tilesets
+Sprites are rendered directly without button overhead
+Added hover effects when the mouse moves over items

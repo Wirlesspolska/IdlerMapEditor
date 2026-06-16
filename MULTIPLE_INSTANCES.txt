@@ -1,0 +1,62 @@
+Running Multiple Instances of Remere's Map Editor
+===============================================
+
+By default, Remere's Map Editor is configured to run only one instance at a time. 
+When you try to open another map file, it will be opened in the already running instance.
+
+If you want to run multiple instances of the map editor simultaneously (3-5 separate instances as requested), 
+you have several options:
+
+1. Use the RunMultipleInstances.bat file
+--------------------------------------------
+The simplest way is to use the included batch file:
+
+- Place the RunMultipleInstances.bat file in the same directory as your map editor executable
+- Double-click RunMultipleInstances.bat to launch a new instance
+- Repeat to open additional instances
+
+2. Command Line Parameters
+--------------------------------------------
+You can launch the map editor with special command line parameters:
+
+- -force-multi-instance
+  This will force the application to launch a new instance regardless of your settings.
+  Example: IdlerMapEditor.exe -force-multi-instance
+
+- -multi-instance 1
+  This will temporarily set the preference to allow multiple instances.
+  Example: IdlerMapEditor.exe -multi-instance 1
+
+3. Change the Preferences
+--------------------------------------------
+You can permanently change the settings in the preferences:
+
+1. Open the map editor
+2. Go to Edit > Preferences
+3. In the "General" tab, uncheck "Open all maps in the same instance"
+4. Click OK
+
+After changing this setting, any new map opened from the file explorer will open in a separate instance.
+
+4. Live Mapping Between Multiple Instances
+--------------------------------------------
+When using multiple instances with Live Mapping:
+
+1. Each instance can host its own Live Mapping server on a different port
+2. To connect between instances:
+   - Host a server in one instance (File > Host Live Map)
+   - In another instance, connect to that server (File > Join Live Map)
+   - Use "localhost" or "127.0.0.1" as the address
+   - The port is automatically assigned, check the console output for the exact port number
+
+3. If you get connection errors when joining:
+   - Make sure you use the correct port number
+   - Try alternative local addresses (localhost or 127.0.0.1)
+   - Check if your firewall is blocking connections
+   - Note that 0.0.0.0 will not work for connecting; use localhost instead
+
+Notes
+--------------------------------------------
+- Each instance runs independently, so any changes you make in one instance won't automatically appear in the others
+- Each instance will use system resources (memory and CPU), so running many instances might slow down your computer
+- If you're working on related map files, you might want to use the normal single-instance mode with multiple tabs instead 

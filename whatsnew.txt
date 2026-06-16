@@ -1,0 +1,7 @@
+Version 6.7.4
+- Added ActionID drawing feature
+- Added ability to set ActionID for placed items
+- Added ActionID input field and checkbox in palette window
+
+Version 6.7.3
+- Initial release 

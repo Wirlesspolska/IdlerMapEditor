@@ -1,0 +1,7 @@
+ZZZIDLER + RME integration
+
+new sub site called /Map Editor Realm
+where information about online users is and a global chat where people can talk in map editor and share ideas with others. :) 
+with simple login and password for users for chat.
+chat logging.
+screenshot support in the chat "player has to request download of image" 

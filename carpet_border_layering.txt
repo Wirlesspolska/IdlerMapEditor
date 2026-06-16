@@ -1,0 +1,104 @@
+# Carpet vs Border Layering in Remere's Map Editor
+
+## Current Behavior Analysis
+
+### Borders (Ground Brush Borders)
+- **Implementation**: Borders are implemented in `GroundBrush::doBorders()` in ground_brush.cpp
+- **Behavior**: When applying borders, the editor calls `tile->cleanBorders()` which removes ALL existing border items from the tile
+- **Problem**: This prevents layering of different border types, as new borders completely replace existing ones
+- **Our Solution**: We've implemented the "Same Ground Type Border" feature which preserves borders from other ground types
+
+### Carpets
+- **Implementation**: Carpets are implemented in `CarpetBrush::doCarpets()` in carpet_brush.cpp
+- **Behavior**: When drawing a carpet, the editor calls `undraw(map, tile)` which removes ALL existing carpet items from the tile
+- **Problem**: Similar to borders, this prevents layering of different carpet types
+- **Current Code Issue**: In `CarpetBrush::draw()`, it calls `undraw(map, tile)` which removes all existing carpets before adding the new one
+
+## Key Differences Between Borders and Carpets
+
+1. **Purpose**:
+   - Borders: Used for terrain transitions (grass to dirt, etc.)
+   - Carpets: Used for decorative floor coverings (rugs, special floor tiles)
+
+2. **Implementation**:
+   - Borders: Part of ground brushes, automatically applied at terrain transitions
+   - Carpets: Separate brush type, manually placed by the user
+
+3. **Z-Order**:
+   - Borders: Typically at the bottom of the tile's item stack
+   - Carpets: Can be placed at various heights in the tile's item stack
+
+4. **Behavior**:
+   - Borders: Automatically adjusted based on surrounding terrain
+   - Carpets: Automatically adjusted based on surrounding carpets of the same type
+
+## Proposed Solution for Carpet Layering
+
+Similar to our "Same Ground Type Border" feature, we can implement a "Layer Carpets" feature that would allow carpets to be placed on top of each other rather than replacing existing ones.
+
+### Implementation Steps:
+
+1. **Add a new setting**:
+   ```cpp
+   // In settings.h
+   LAYER_CARPETS,
+   
+   // In settings.cpp
+   Int(LAYER_CARPETS, 0);
+   ```
+
+2. **Modify CarpetBrush::draw method**:
+   ```cpp
+   void CarpetBrush::draw(BaseMap* map, Tile* tile, void* parameter) {
+       if (!g_settings.getBoolean(Config::LAYER_CARPETS)) {
+           undraw(map, tile); // Remove old carpets only if layering is disabled
+       }
+       tile->addItem(Item::Create(getRandomCarpet(CARPET_CENTER)));
+   }
+   ```
+
+3. **Add UI option**:
+   - Add a checkbox in the preferences dialog or a menu option to enable/disable carpet layering
+
+### Technical Considerations:
+
+1. **Z-Order Management**:
+   - When layering carpets, we need to ensure they're placed at the correct Z-order
+   - Carpets should generally be placed above ground items but below other items
+   - May need to implement a more sophisticated item insertion method that respects Z-order
+
+2. **Visual Clarity**:
+   - Multiple layered carpets might create visual confusion
+   - Consider adding a transparency option or highlight mode to see through layers
+
+3. **Performance**:
+   - More items per tile means more rendering and processing overhead
+   - For large maps with many layered carpets, this could impact performance
+
+4. **Editing Experience**:
+   - Users might need a way to select specific carpet layers for editing or removal
+   - Consider adding a "select layer" tool or a layer management panel
+
+## Implementation for Ground Brushes as Carpets
+
+For ground brushes that should behave like carpets (being placed on top rather than replacing):
+
+1. **Add a new attribute to GroundBrush**:
+   ```cpp
+   bool behave_as_carpet;
+   ```
+
+2. **Modify the brush loading code to recognize this attribute**:
+   ```xml
+   <brush name="sand gravel" type="ground" server_lookid="8033" behave_as_carpet="true">
+   ```
+
+3. **Modify the drawing behavior**:
+   - If `behave_as_carpet` is true, don't replace the existing ground
+   - Instead, add the brush as an item on top of the existing ground
+
+This would allow ground brushes to be used for layering effects while still benefiting from the automatic border handling.
+
+## Conclusion
+
+By implementing these changes, we can significantly enhance the editor's capabilities for creating complex, layered environments. The "Same Ground Type Border" feature we've already implemented is a great first step, and extending similar functionality to carpets would provide a more consistent and powerful editing experience. 

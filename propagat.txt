@@ -1,0 +1,1 @@
+propagate host changes to map to all clients too also ensure that if player sends a piece of map to host propagate to all connected clients we will need separate thread for all networking to ensure that it does not lag the application and map view along with drawing elements 

@@ -1,0 +1,3 @@
+when raw palette is drawing in palette window check box 
+borderize
+the palette will borderize any found borders to be running against the raw field input creating seamless ground brush without the need to declare it in xml

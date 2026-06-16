@@ -1,0 +1,3 @@
+ActionID UID / quest reference
+option to reference actionID and UID into an decompiled list e.g position layer z axis itemid if found matching in otbm then apply the AID 
+export AID UID "script" references for map collaboration so that multiple people can edit same map without removing the questmakers progress.

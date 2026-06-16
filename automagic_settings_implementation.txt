@@ -1,0 +1,296 @@
+AUTOMAGIC SETTINGS UI IMPLEMENTATION PLAN
+==========================================
+
+1. CREATE NEW FILES
+------------------
+- automagic_settings.h: Header file for the AutomagicSettingsDialog class
+- automagic_settings.cpp: Implementation file for the AutomagicSettingsDialog class
+
+2. HEADER FILE STRUCTURE (automagic_settings.h)
+---------------------------------------------
+```cpp
+#ifndef RME_AUTOMAGIC_SETTINGS_H_
+#define RME_AUTOMAGIC_SETTINGS_H_
+
+#include <wx/dialog.h>
+#include <wx/checkbox.h>
+#include <wx/button.h>
+#include <wx/sizer.h>
+#include <wx/stattext.h>
+#include <wx/statbox.h>
+
+class AutomagicSettingsDialog : public wxDialog {
+public:
+    AutomagicSettingsDialog(wxWindow* parent);
+    virtual ~AutomagicSettingsDialog();
+
+    // Get the current settings from the dialog
+    bool IsAutomagicEnabled() const;
+    bool IsSameGroundTypeBorderEnabled() const;
+
+protected:
+    // Event handlers
+    void OnClickOK(wxCommandEvent& event);
+    void OnClickCancel(wxCommandEvent& event);
+    void OnAutomagicCheck(wxCommandEvent& event);
+    void OnSameGroundTypeCheck(wxCommandEvent& event);
+    void OnClose(wxCloseEvent& event);
+
+    // UI elements
+    wxCheckBox* automagic_enabled_checkbox;
+    wxCheckBox* same_ground_type_checkbox;
+    wxStdDialogButtonSizer* buttons_sizer;
+    wxButton* ok_button;
+    wxButton* cancel_button;
+
+    DECLARE_EVENT_TABLE()
+};
+
+#endif // RME_AUTOMAGIC_SETTINGS_H_
+```
+
+3. IMPLEMENTATION FILE STRUCTURE (automagic_settings.cpp)
+-------------------------------------------------------
+```cpp
+#include "main.h"
+#include "automagic_settings.h"
+#include "settings.h"
+#include "gui.h"
+
+// Define a new setting in settings.h/cpp for the Same Ground Type option
+// Config::SAME_GROUND_TYPE_BORDER
+
+BEGIN_EVENT_TABLE(AutomagicSettingsDialog, wxDialog)
+    EVT_BUTTON(wxID_OK, AutomagicSettingsDialog::OnClickOK)
+    EVT_BUTTON(wxID_CANCEL, AutomagicSettingsDialog::OnClickCancel)
+    EVT_CHECKBOX(wxID_ANY, AutomagicSettingsDialog::OnAutomagicCheck)
+    EVT_CHECKBOX(wxID_ANY, AutomagicSettingsDialog::OnSameGroundTypeCheck)
+    EVT_CLOSE(AutomagicSettingsDialog::OnClose)
+END_EVENT_TABLE()
+
+AutomagicSettingsDialog::AutomagicSettingsDialog(wxWindow* parent) :
+    wxDialog(parent, wxID_ANY, "Automagic Settings", wxDefaultPosition, wxDefaultSize, wxDEFAULT_DIALOG_STYLE)
+{
+    // Create main sizer
+    wxBoxSizer* main_sizer = new wxBoxSizer(wxVERTICAL);
+    
+    // Create a static box for the settings
+    wxStaticBoxSizer* settings_sizer = new wxStaticBoxSizer(wxVERTICAL, this, "Border Settings");
+    
+    // Create checkboxes
+    automagic_enabled_checkbox = new wxCheckBox(this, wxID_ANY, "Enable Automagic");
+    automagic_enabled_checkbox->SetValue(g_settings.getBoolean(Config::USE_AUTOMAGIC));
+    automagic_enabled_checkbox->SetToolTip("Automatically apply borders and wall connections when editing");
+    settings_sizer->Add(automagic_enabled_checkbox, 0, wxALL, 5);
+    
+    same_ground_type_checkbox = new wxCheckBox(this, wxID_ANY, "Same Ground Type Border");
+    same_ground_type_checkbox->SetValue(g_settings.getBoolean(Config::SAME_GROUND_TYPE_BORDER));
+    same_ground_type_checkbox->SetToolTip("Preserve existing borders and only apply borders for the current ground type");
+    settings_sizer->Add(same_ground_type_checkbox, 0, wxALL, 5);
+    
+    // Add description text
+    wxStaticText* description = new wxStaticText(this, wxID_ANY, 
+        "When 'Same Ground Type Border' is enabled, the editor will:\n"
+        "- Preserve existing borders on tiles\n"
+        "- Only apply borders for the current ground type\n"
+        "- Respect Z-axis positioning of existing borders\n"
+        "- Allow multiple border layering");
+    settings_sizer->Add(description, 0, wxALL, 5);
+    
+    main_sizer->Add(settings_sizer, 0, wxEXPAND | wxALL, 10);
+    
+    // Create buttons
+    buttons_sizer = new wxStdDialogButtonSizer();
+    ok_button = new wxButton(this, wxID_OK, "OK");
+    cancel_button = new wxButton(this, wxID_CANCEL, "Cancel");
+    
+    buttons_sizer->AddButton(ok_button);
+    buttons_sizer->AddButton(cancel_button);
+    buttons_sizer->Realize();
+    
+    main_sizer->Add(buttons_sizer, 0, wxALIGN_CENTER | wxALL, 10);
+    
+    // Set sizer and fit
+    SetSizer(main_sizer);
+    Fit();
+    Centre();
+}
+
+AutomagicSettingsDialog::~AutomagicSettingsDialog() {
+    // Nothing to clean up
+}
+
+bool AutomagicSettingsDialog::IsAutomagicEnabled() const {
+    return automagic_enabled_checkbox->GetValue();
+}
+
+bool AutomagicSettingsDialog::IsSameGroundTypeBorderEnabled() const {
+    return same_ground_type_checkbox->GetValue();
+}
+
+void AutomagicSettingsDialog::OnClickOK(wxCommandEvent& event) {
+    // Save settings
+    g_settings.setInteger(Config::USE_AUTOMAGIC, IsAutomagicEnabled() ? 1 : 0);
+    g_settings.setInteger(Config::BORDER_IS_GROUND, IsAutomagicEnabled() ? 1 : 0);
+    g_settings.setInteger(Config::SAME_GROUND_TYPE_BORDER, IsSameGroundTypeBorderEnabled() ? 1 : 0);
+    
+    // Update status text
+    if (IsAutomagicEnabled()) {
+        g_gui.SetStatusText("Automagic enabled.");
+    } else {
+        g_gui.SetStatusText("Automagic disabled.");
+    }
+    
+    EndModal(wxID_OK);
+}
+
+void AutomagicSettingsDialog::OnClickCancel(wxCommandEvent& event) {
+    // Don't save settings
+    EndModal(wxID_CANCEL);
+}
+
+void AutomagicSettingsDialog::OnAutomagicCheck(wxCommandEvent& event) {
+    // Enable/disable the Same Ground Type checkbox based on Automagic checkbox
+    same_ground_type_checkbox->Enable(automagic_enabled_checkbox->GetValue());
+}
+
+void AutomagicSettingsDialog::OnSameGroundTypeCheck(wxCommandEvent& event) {
+    // Nothing to do here, just handle the event
+}
+
+void AutomagicSettingsDialog::OnClose(wxCloseEvent& event) {
+    // Same as cancel
+    EndModal(wxID_CANCEL);
+}
+```
+
+4. MODIFY SETTINGS.H/CPP
+-----------------------
+Add a new setting for the Same Ground Type Border option:
+
+In settings.h:
+```cpp
+// In the Key enum
+SAME_GROUND_TYPE_BORDER,
+```
+
+In settings.cpp:
+```cpp
+// In the setDefaults() method
+Int(SAME_GROUND_TYPE_BORDER, 0);
+```
+
+5. MODIFY MAIN_MENUBAR.CPP
+-------------------------
+Modify the OnToggleAutomagic method to show the dialog instead of directly toggling:
+
+```cpp
+void MainMenuBar::OnToggleAutomagic(wxCommandEvent& WXUNUSED(event)) {
+    AutomagicSettingsDialog dialog(frame);
+    if (dialog.ShowModal() == wxID_OK) {
+        // Settings are saved in the dialog's OnClickOK method
+        // Update the menu item check state
+        CheckItem(MenuBar::AUTOMAGIC, g_settings.getBoolean(Config::USE_AUTOMAGIC));
+    } else {
+        // Restore the menu item check state to match the current setting
+        CheckItem(MenuBar::AUTOMAGIC, g_settings.getBoolean(Config::USE_AUTOMAGIC));
+    }
+}
+```
+
+6. MODIFY TILE.CPP
+----------------
+Modify the cleanBorders method to respect the Same Ground Type Border setting:
+
+```cpp
+void Tile::cleanBorders() {
+    // If Same Ground Type Border is enabled, we don't clean all borders
+    if (g_settings.getBoolean(Config::SAME_GROUND_TYPE_BORDER)) {
+        // We'll handle this in the GroundBrush::doBorders method
+        return;
+    }
+
+    // Original implementation for cleaning all borders
+    ItemVector::iterator it;
+    it = items.begin();
+    while (it != items.end()) {
+        if ((*it)->isBorder()) {
+            delete *it;
+            it = items.erase(it);
+        } else {
+            // Borders should only be on the bottom, we can ignore the rest of the items
+            return;
+        }
+    }
+}
+```
+
+7. MODIFY GROUND_BRUSH.CPP
+------------------------
+Modify the doBorders method to handle the Same Ground Type Border setting:
+
+```cpp
+void GroundBrush::doBorders(BaseMap* map, Tile* tile) {
+    // ... existing code ...
+
+    // Check if we should preserve existing borders
+    bool preserve_borders = g_settings.getBoolean(Config::SAME_GROUND_TYPE_BORDER);
+    
+    // If we're not preserving borders, clean all existing borders
+    if (!preserve_borders) {
+        tile->cleanBorders();
+    } else {
+        // If we are preserving borders, we need to identify and remove only
+        // the borders that belong to the current ground brush
+        ItemVector::iterator it = tile->items.begin();
+        while (it != tile->items.end()) {
+            if ((*it)->isBorder()) {
+                // Check if this border belongs to the current border group
+                // by comparing its ID with the IDs in our border list
+                bool is_current_border = false;
+                for (const auto& borderCluster : borderList) {
+                    if (borderCluster.border && borderCluster.border->hasItemId((*it)->getID())) {
+                        is_current_border = true;
+                        break;
+                    }
+                }
+                
+                if (is_current_border) {
+                    // Remove only borders from the current border group
+                    delete *it;
+                    it = tile->items.erase(it);
+                } else {
+                    // Keep borders from other border groups
+                    ++it;
+                }
+            } else {
+                // Not a border item, keep it
+                ++it;
+            }
+        }
+    }
+
+    // ... rest of the existing code to add new borders ...
+}
+```
+
+8. TESTING PLAN
+-------------
+1. Test the UI dialog:
+   - Verify that the dialog appears when pressing the A key
+   - Verify that the checkboxes reflect the current settings
+   - Verify that the settings are saved when clicking OK
+   - Verify that the settings are not saved when clicking Cancel
+
+2. Test the Same Ground Type Border functionality:
+   - Create a map with multiple terrain types
+   - Enable Automagic and Same Ground Type Border
+   - Place borders of different types
+   - Verify that existing borders are preserved
+   - Verify that only borders of the current ground type are updated
+   - Verify that Z-axis positioning is respected
+
+3. Test compatibility with existing features:
+   - Verify that Borderize Selection still works correctly
+   - Verify that Borderize Map still works correctly
+   - Verify that copy/paste operations respect the settings 

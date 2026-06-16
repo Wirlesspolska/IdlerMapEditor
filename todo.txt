@@ -1,0 +1,32 @@
+1. Creature Search Issues
+Problems:
+Search Results: The current implementation lists all spawns, not just those matching the typed creature name.
+Name Matching: It does not filter by the input or selected creature name.
+Batching: It does not batch results or allow “Next”/pagination like the item search.
+Result Formatting: It does not show the monster name in the results, just “Spawn at ...”.
+Solution Plan:
+Filter: Only show spawns/creatures whose name contains the typed string (case-insensitive, partial match).
+Result Formatting: Show the creature name and position in the results.
+Batching: Implement batching/pagination like the item search (e.g., show N results, allow “Next”).
+Loose Creatures: Continue to show loose creatures (not in spawns) that match the search.
+Respect List Selection: If a creature is selected from the list, search for that exact name.
+2. Border Editor Window Access
+Request:
+Add a button/menu entry in the main menu bar (Idler main menu) to open the Border Editor Window, not just from the palette.
+Solution Plan:
+Add a new menu action in main_menubar.h/cpp for “Border Editor...”
+Implement the handler to open BorderEditorDialog.
+Add the action to the appropriate menu (e.g., “Tools” or “Edit”).
+Next Steps
+Let’s break this into two tasks:
+A. Fix Creature Search Logic
+Update the search to:
+Filter by the typed string (case-insensitive, substring match).
+Only show matching creatures (not all spawns).
+Show the creature name in the result.
+Batch results (e.g., 100 at a time, with “Next”).
+If a creature is selected from the list, search for that exact name.
+B. Add Border Editor to Main Menu
+Add a menu item to open the Border Editor Window from the main menu bar.
+I’ll start by gathering the relevant code for batching/pagination and menu actions, then implement both improvements.
+Would you like me to proceed with both changes, or focus on one first? If both, I’ll start with the creature search fix.

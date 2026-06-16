@@ -1,0 +1,6 @@
+Palette modifications
+store action ids or place items with pre set action ids in our palette.
+apply protection zone when drawing if its toggled via the button so modification of button behavior via other wxWidgets class
+apply other special tiles on toggle
+so when we draw map we can apply the Tile Flags on the spot time consumption 99.9% improved mapping
+_______

@@ -1,0 +1,146 @@
+AUTOMAGIC SYSTEM OVERVIEW
+-------------------------
+The Automagic system in Remere's Map Editor provides automatic border and wall handling.
+
+FILES INVOLVED:
+--------------
+- settings.h/cpp: 
+  Defines USE_AUTOMAGIC, BORDERIZE_PASTE, BORDERIZE_DRAG settings
+  Controls whether automagic is enabled and its behavior
+
+- main_menubar.h/cpp: 
+  Implements menu options for toggling Automagic and borderizing
+  Contains OnToggleAutomagic(), OnBorderizeSelection(), OnBorderizeMap() methods
+  Provides keyboard shortcuts (A for Automagic, Ctrl+B for Borderize Selection)
+
+- tile.h/cpp: 
+  Contains borderize() and wallize() methods that apply automatic borders/walls
+  Includes methods for cleaning borders and walls
+
+- ground_brush.cpp: 
+  Implements GroundBrush::doBorders() which handles automatic borders
+  Examines neighboring tiles to determine appropriate borders between different terrain types
+
+- wall_brush.cpp: 
+  Implements WallBrush::doWalls() which handles automatic walls
+  Connects wall segments automatically based on adjacent walls
+
+- borderize_window.cpp: 
+  UI for borderizing large selections or the entire map
+  Processes tiles in chunks to avoid performance issues
+
+- editor.cpp: 
+  Contains borderizeSelection() and borderizeMap() methods
+  Implements the logic for applying borders to selections or the entire map
+
+- copybuffer.cpp: 
+  Applies borderize to pasted content
+  Handles automatic borders when copying and pasting tiles
+
+HOW IT WORKS:
+------------
+1. When enabled (via Config::USE_AUTOMAGIC), the editor automatically applies borders
+   and wall connections when tiles are placed, moved, or modified.
+
+2. Borderizing:
+   - Examines neighboring tiles to determine appropriate borders between different terrain types
+   - GroundBrush::doBorders() checks the 8 surrounding tiles to determine border patterns
+   - Creates smooth transitions between different terrain types
+   - Applies border items to create visually appealing terrain transitions
+
+3. Wallizing:
+   - Connects wall segments automatically based on adjacent walls
+   - WallBrush::doWalls() checks the 4 adjacent tiles (N, E, S, W) for matching wall types
+   - Automatically selects the appropriate wall piece based on connections
+   - Handles wall decorations to match the wall alignment
+
+4. The system can be triggered:
+   - Automatically during editing when Automagic is enabled
+   - Manually via Map > Borderize Selection (Ctrl+B)
+   - Manually via Map > Borderize Map (processes the entire map)
+
+SETTINGS:
+--------
+- USE_AUTOMAGIC: Master toggle for the automagic system
+- BORDER_IS_GROUND: Treats borders as ground items (toggled with Automagic)
+- BORDERIZE_PASTE: Automatically borderize after pasting
+- BORDERIZE_DRAG: Automatically borderize after drag operations
+- BORDERIZE_DRAG_THRESHOLD: Maximum selection size for auto-borderizing during drag
+- BORDERIZE_PASTE_THRESHOLD: Maximum selection size for auto-borderizing during paste
+
+CURRENT LIMITATIONS:
+------------------
+The current automagic system has a significant limitation: when applying borders, it removes all other border items from tiles. This can disrupt important borders on the map that should be preserved, especially when working with multiple terrain types that overlap.
+
+PROPOSED ENHANCEMENTS:
+--------------------
+A new UI approach is needed to replace the simple A hotkey toggle with a more flexible interface:
+
+1. Automagic Settings Window:
+   - Should be accessible via the A hotkey instead of directly toggling automagic
+   - Would provide a more detailed control interface for the automagic system
+
+2. Key Features of the New UI:
+   - "Automagic Enable" tickbox: Master toggle for the automagic system
+   - "Same Ground Type Border" tickbox: New functionality that preserves existing borders
+
+3. Same Ground Type Border Functionality:
+   - When enabled, this will ignore all other borders on a tile but respect their Z-axis positioning
+   - Will only fetch and apply border IDs from the currently selected border group in borders.xml
+   - Will properly adjust Z-axis positioning to maintain visual hierarchy
+   - Will NOT remove other borders from the tile, allowing multiple border layering
+   - Example: If we have ground mud and grass, and mud is under grass, selecting mud will place a new mud border on top of grass instead of removing all tiles
+
+4. Implementation Considerations:
+   - The system needs to work with the Z-axis to properly layer borders
+   - When working with a specific ground type, it should place borders above the ground without disturbing existing tiles
+   - This allows for multiple border layering while maintaining visual consistency
+
+BORDERIZE WINDOW:
+---------------
+The BorderizeWindow provides a UI for processing large maps in chunks to avoid
+performance issues when borderizing extensive areas. Features include:
+- Progress tracking
+- Chunk size control
+- Ability to process the map in manageable segments
+- Action queue integration for undo/redo support
+
+IMPLEMENTATION DETAILS:
+---------------------
+1. Border Detection:
+   - Uses a pattern-matching system to determine which borders to apply
+   - Checks all 8 surrounding tiles (N, NE, E, SE, S, SW, W, NW)
+   - Creates a bitmask representing which neighbors have different terrain
+
+2. Wall Connection:
+   - Examines the 4 cardinal directions (N, E, S, W)
+   - Creates a bitmask of connected walls
+   - Selects the appropriate wall piece based on the connection pattern
+   - Handles special cases like corners and T-junctions
+
+3. Performance Considerations:
+   - Large maps are processed in chunks to avoid freezing the editor
+   - Thresholds prevent automatic borderizing of large selections
+   - The user can control chunk size when manually borderizing
+
+USAGE TIPS:
+----------
+1. Enable Automagic for automatic borders during normal editing
+2. Use the "Same Ground Type Border" option when you want to preserve existing borders
+3. Use Borderize Selection (Ctrl+B) to fix borders in a specific area
+4. Use Borderize Map for a complete map refresh (use with caution on large maps)
+5. Wall cleaning is exempt from automagic to allow manual wall placement
+6. For large maps, consider increasing the chunk size in the Borderize Window
+
+DEVELOPMENT TASKS:
+----------------
+1. Create a new Automagic Settings UI window that appears when pressing the A hotkey
+2. Implement the "Automagic Enable" tickbox to replace the current toggle functionality
+3. Implement the "Same Ground Type Border" tickbox and associated functionality
+4. Modify the borderize() method to check for the Same Ground Type setting
+5. When Same Ground Type is enabled:
+   - Identify the current ground type's border items from borders.xml
+   - Preserve existing borders on tiles
+   - Apply new borders at the appropriate Z-axis position
+   - Ensure proper visual layering of multiple border types
+6. Update keyboard shortcuts and menu items to reflect the new UI approach 

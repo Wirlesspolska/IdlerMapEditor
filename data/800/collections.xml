@@ -1,0 +1,31 @@
+<materials>
+	<tileset name="Cave Dungeon">
+		<collections>
+			
+		</collections>
+	</tileset>
+
+	<tileset name="Desert">
+		<collections>
+		
+		</collections>
+	</tileset>
+
+	<tileset name="Forest">
+		<collections>
+		
+		</collections>
+	</tileset>
+
+	<tileset name="Jungle">
+		<collections>
+			
+		</collections>
+	</tileset>
+
+	<tileset name="Tropical">
+		<collections>
+		
+		</collections>
+	</tileset>
+</materials>

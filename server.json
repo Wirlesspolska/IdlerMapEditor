@@ -1,0 +1,9 @@
+// server.json example
+{
+    "map": "mymap.otbm",
+    "port": 3333,
+    "password": "secret",
+    "max_clients": 16,
+    "auto_save": true,
+    "save_interval": 300
+}

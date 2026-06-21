@@ -110,6 +110,8 @@ public:
 
 	void Refresh();
 
+	void WarmViewportSprites();
+
 	void ScreenToMap(int screen_x, int screen_y, int* map_x, int* map_y);
 	void GetScreenCenter(int* map_x, int* map_y);
  

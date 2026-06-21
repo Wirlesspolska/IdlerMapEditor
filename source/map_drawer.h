@@ -288,7 +288,7 @@ public:
 	void DrawTooltips();
 	void DrawLight();
 
-
+	void WarmViewportSprites(bool upload_textures = true);
 
 	void TakeScreenshot(uint8_t* screenshot_buffer);
 
@@ -306,6 +306,7 @@ protected:
 	void BlitSquare(int sx, int sy, int red, int green, int blue, int alpha, int size = 0);
 	void DrawRawBrush(int screenx, int screeny, ItemType* itemType, uint8_t r, uint8_t g, uint8_t b, uint8_t alpha);
 	void DrawTile(TileLocation* tile);
+	void WarmItemSprite(const Position& pos, Item* item, const Tile* tile, bool upload_textures);
 	void DrawBrushIndicator(int x, int y, Brush* brush, uint8_t r, uint8_t g, uint8_t b);
 	void DrawHookIndicator(int x, int y, const ItemType& type);
 	void WriteTooltip(Tile* tile, Item* item, std::ostringstream& stream, bool isHouseTile);

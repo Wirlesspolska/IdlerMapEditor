@@ -189,6 +189,23 @@ void MapCanvas::Refresh() {
 	wxGLCanvas::Refresh();
 }
 
+void MapCanvas::WarmViewportSprites() {
+	if (!g_gui.IsVersionLoaded() || !g_gui.IsRenderingEnabled()) {
+		return;
+	}
+
+	int width = 0;
+	int height = 0;
+	GetSize(&width, &height);
+	if (width <= 0 || height <= 0) {
+		drawer->WarmViewportSprites(false);
+		return;
+	}
+
+	SetCurrent(*g_gui.GetGLContext(this));
+	drawer->WarmViewportSprites(true);
+}
+
 void MapCanvas::SetZoom(double value) {
 	if (value < 0.125) {
 		value = 0.125;

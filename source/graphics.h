@@ -93,6 +93,9 @@ public:
 
 	void clean(int time);
 
+	void warmHardwareTextures(int subtype, int pattern_x, int pattern_y, int pattern_z, int frame = 0);
+	void warmSpriteData(int subtype, int pattern_x, int pattern_y, int pattern_z, int frame = 0);
+
 	int getDrawHeight() const;
 	std::pair<int, int> getDrawOffset() const;
 	uint8_t getMiniMapColor() const;
@@ -123,6 +126,8 @@ protected:
 		void visit();
 		virtual void clean(int time);
 
+		virtual void ensureDataLoaded() { }
+
 		virtual GLuint getHardwareID() = 0;
 		virtual uint8_t* getRGBData() = 0;
 		virtual uint8_t* getRGBAData() = 0;
@@ -145,6 +150,8 @@ protected:
 		uint8_t* dump;
 
 		virtual void clean(int time);
+
+		virtual void ensureDataLoaded() override;
 
 		virtual GLuint getHardwareID();
 		virtual uint8_t* getRGBData();

@@ -1068,6 +1068,35 @@ GLuint GameSprite::getHardwareID(int _x, int _y, int _layer, int _count, int _pa
 	return spriteList[v]->getHardwareID();
 }
 
+void GameSprite::warmHardwareTextures(int subtype, int pattern_x, int pattern_y, int pattern_z, int frame) {
+	for (int cx = 0; cx != width; ++cx) {
+		for (int cy = 0; cy != height; ++cy) {
+			for (int cf = 0; cf != layers; ++cf) {
+				getHardwareID(cx, cy, cf, subtype, pattern_x, pattern_y, pattern_z, frame);
+			}
+		}
+	}
+}
+
+void GameSprite::warmSpriteData(int subtype, int pattern_x, int pattern_y, int pattern_z, int frame) {
+	for (int cx = 0; cx != width; ++cx) {
+		for (int cy = 0; cy != height; ++cy) {
+			for (int cf = 0; cf != layers; ++cf) {
+				uint32_t v;
+				if (subtype >= 0 && height <= 1 && width <= 1) {
+					v = subtype;
+				} else {
+					v = getIndex(cx, cy, cf, pattern_x, pattern_y, pattern_z, frame);
+				}
+				if (v >= numsprites) {
+					v = (numsprites == 1) ? 0 : (v % numsprites);
+				}
+				spriteList[v]->ensureDataLoaded();
+			}
+		}
+	}
+}
+
 GameSprite::TemplateImage* GameSprite::getTemplateImage(int sprite_index, const Outfit& outfit) {
 	if (instanced_templates.empty()) {
 		TemplateImage* img = newd TemplateImage(this, sprite_index, outfit);
@@ -1372,6 +1401,12 @@ uint8_t* GameSprite::NormalImage::getRGBData() {
 		write += 3;
 	}
 	return data;
+}
+
+void GameSprite::NormalImage::ensureDataLoaded() {
+	if (!dump && !g_settings.getInteger(Config::USE_MEMCACHED_SPRITES)) {
+		g_gui.gfx.loadSpriteDump(dump, size, id);
+	}
 }
 
 uint8_t* GameSprite::NormalImage::getRGBAData() {

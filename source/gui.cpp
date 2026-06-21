@@ -827,6 +827,12 @@ bool GUI::LoadMap(const FileName& fileName) {
 	FitViewToMap(mapTab);
 	root->UpdateMenubar();
 
+	mapTab->CallAfter([mapTab]() {
+		if (mapTab && mapTab->GetCanvas()) {
+			mapTab->GetCanvas()->WarmViewportSprites();
+		}
+	});
+
 	// Pre-cache minimap when a map is loaded so opening the panel is instant.
 	PrepareMinimapCache();
 

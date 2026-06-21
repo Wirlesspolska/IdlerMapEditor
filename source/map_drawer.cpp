@@ -360,6 +360,101 @@ void MapDrawer::SetupVars() {
 	end_y = start_y + screensize_y / tile_size + 2;
 }
 
+void MapDrawer::WarmItemSprite(const Position& pos, Item* item, const Tile* tile, bool upload_textures) {
+	if (!item) {
+		return;
+	}
+
+	ItemType& it = g_items[item->getID()];
+	GameSprite* spr = it.sprite;
+	if (it.isMetaItem() || spr == nullptr) {
+		return;
+	}
+
+	int pattern_x = pos.x % spr->pattern_x;
+	int pattern_y = pos.y % spr->pattern_y;
+	int pattern_z = pos.z % spr->pattern_z;
+	int subtype = -1;
+
+	if (it.isSplash() || it.isFluidContainer()) {
+		subtype = item->getSubtype();
+	} else if (it.isHangable) {
+		if (tile && tile->hasProperty(HOOK_SOUTH)) {
+			pattern_x = 1;
+		} else if (tile && tile->hasProperty(HOOK_EAST)) {
+			pattern_x = 2;
+		} else {
+			pattern_x = 0;
+		}
+	} else if (it.stackable) {
+		if (item->getSubtype() <= 1) {
+			subtype = 0;
+		} else if (item->getSubtype() <= 2) {
+			subtype = 1;
+		} else if (item->getSubtype() <= 3) {
+			subtype = 2;
+		} else if (item->getSubtype() <= 4) {
+			subtype = 3;
+		} else if (item->getSubtype() < 10) {
+			subtype = 4;
+		} else if (item->getSubtype() < 25) {
+			subtype = 5;
+		} else if (item->getSubtype() < 50) {
+			subtype = 6;
+		} else {
+			subtype = 7;
+		}
+	}
+
+	if (upload_textures) {
+		spr->warmHardwareTextures(subtype, pattern_x, pattern_y, pattern_z, item->getFrame());
+	} else {
+		spr->warmSpriteData(subtype, pattern_x, pattern_y, pattern_z, item->getFrame());
+	}
+}
+
+void MapDrawer::WarmViewportSprites(bool upload_textures) {
+	SetupVars();
+
+	const int nd_start_x = start_x & ~3;
+	const int nd_start_y = start_y & ~3;
+	const int nd_end_x = (end_x & ~3) + 4;
+	const int nd_end_y = (end_y & ~3) + 4;
+
+	for (int map_z = start_z; map_z >= end_z; --map_z) {
+		for (int nd_map_x = nd_start_x; nd_map_x <= nd_end_x; nd_map_x += 4) {
+			for (int nd_map_y = nd_start_y; nd_map_y <= nd_end_y; nd_map_y += 4) {
+				QTreeNode* nd = editor.map.getLeaf(nd_map_x, nd_map_y);
+				if (!nd) {
+					continue;
+				}
+
+				for (int map_x = 0; map_x < 4; ++map_x) {
+					for (int map_y = 0; map_y < 4; ++map_y) {
+						TileLocation* location = nd->getTile(map_x, map_y, map_z);
+						if (!location) {
+							continue;
+						}
+
+						Tile* tile = location->get();
+						if (!tile) {
+							continue;
+						}
+
+						const Position& pos = tile->getPosition();
+						if (tile->ground) {
+							WarmItemSprite(pos, tile->ground, tile, upload_textures);
+						}
+						for (Item* item : tile->items) {
+							WarmItemSprite(pos, item, tile, upload_textures);
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
 void MapDrawer::SetupGL() {
 	glViewport(0, 0, screensize_x, screensize_y);
 

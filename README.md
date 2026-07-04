@@ -30,13 +30,11 @@ Bugs
 Have you found a bug? Me too!
 
 Other Applications
+https://github.com/Wirlesspolska/ItemEditor-master
 ==========
-XD
 Download
 ========
-
-Idlers Tavern discord has latest builds
-https://discord.gg/FD2cYKBq5E
+In the repo as .exe as git intended.
 
 
 Compiling

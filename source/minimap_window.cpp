@@ -71,6 +71,25 @@ RELEVANT CODE SECTIONS:
 #include <wx/sizer.h>
 #include <wx/statline.h>
 
+namespace {
+Editor* GetMinimapEditor() {
+	MapCanvas* canvas = g_gui.GetActiveMapCanvas();
+	if (canvas) {
+		return &canvas->GetEditor();
+	}
+	return g_gui.GetCurrentEditor();
+}
+
+MapCanvas* GetMinimapCanvas() {
+	MapCanvas* canvas = g_gui.GetActiveMapCanvas();
+	if (canvas) {
+		return canvas;
+	}
+	MapTab* tab = g_gui.GetCurrentMapTab();
+	return tab ? tab->GetCanvas() : nullptr;
+}
+} // namespace
+
 BEGIN_EVENT_TABLE(MinimapWindow, wxPanel)
 	EVT_ERASE_BACKGROUND(MinimapWindow::OnEraseBackground)
 	EVT_KEY_DOWN(MinimapWindow::OnKey)
@@ -236,7 +255,11 @@ void MinimapWindow::UpdateHeaderInfo() {
 		return;
 	}
 
-	MapCanvas* canvas = g_gui.GetCurrentMapTab()->GetCanvas();
+	MapCanvas* canvas = GetMinimapCanvas();
+	if (!canvas) {
+		position_label_->SetLabel(wxT("Position: —"));
+		return;
+	}
 	int centerX = 0;
 	int centerY = 0;
 	canvas->GetScreenCenter(&centerX, &centerY);
@@ -282,8 +305,11 @@ void MinimapWindow::StopRenderThread() {
 void MinimapWindow::RenderThreadFunction() {
 	while(thread_running) {
 		if(needs_update && g_gui.IsEditorOpen()) {
-			Editor& editor = *g_gui.GetCurrentEditor();
-			MapCanvas* canvas = g_gui.GetCurrentMapTab()->GetCanvas();
+			Editor& editor = *GetMinimapEditor();
+			MapCanvas* canvas = GetMinimapCanvas();
+			if (!canvas) {
+				continue;
+			}
 			
 			int center_x, center_y;
 			canvas->GetScreenCenter(&center_x, &center_y);
@@ -460,8 +486,10 @@ void MinimapWindow::OnResizeTimer(wxTimerEvent& event) {
 	
 	// Trigger an immediate update
 	if (g_gui.IsEditorOpen()) {
-		Editor& editor = *g_gui.GetCurrentEditor();
-		MapCanvas* canvas = g_gui.GetCurrentMapTab()->GetCanvas();
+		MapCanvas* canvas = GetMinimapCanvas();
+		if (!canvas) {
+			return;
+		}
 		
 		int center_x, center_y;
 		canvas->GetScreenCenter(&center_x, &center_y);
@@ -479,8 +507,11 @@ void MinimapWindow::PaintMap(wxDC& dc) {
 	
 	if (!g_gui.IsEditorOpen() || !map_canvas_) return;
 	
-	Editor& editor = *g_gui.GetCurrentEditor();
-	MapCanvas* canvas = g_gui.GetCurrentMapTab()->GetCanvas();
+	Editor& editor = *GetMinimapEditor();
+	MapCanvas* canvas = GetMinimapCanvas();
+	if (!canvas) {
+		return;
+	}
 	
 	int centerX, centerY;
 	canvas->GetScreenCenter(&centerX, &centerY);
@@ -546,7 +577,7 @@ void MinimapWindow::StartCacheCurrentFloor() {
 
 void MinimapWindow::BatchCacheFloor(int floor) {
 	if (!g_gui.IsEditorOpen()) return;
-	Editor& editor = *g_gui.GetCurrentEditor();
+	Editor& editor = *GetMinimapEditor();
 	int mapWidth = editor.map.getWidth();
 	int mapHeight = editor.map.getHeight();
 	int totalRows = mapHeight;
@@ -574,8 +605,11 @@ void MinimapWindow::OnMapClick(wxMouseEvent& event) {
 		return;
 	}
 
-	Editor& editor = *g_gui.GetCurrentEditor();
-	MapCanvas* canvas = g_gui.GetCurrentMapTab()->GetCanvas();
+	Editor& editor = *GetMinimapEditor();
+	MapCanvas* canvas = GetMinimapCanvas();
+	if (!canvas) {
+		return;
+	}
 	
 	int centerX, centerY;
 	canvas->GetScreenCenter(&centerX, &centerY);
@@ -597,8 +631,9 @@ void MinimapWindow::OnMapClick(wxMouseEvent& event) {
 }
 
 void MinimapWindow::OnKey(wxKeyEvent& event) {
-	if (g_gui.GetCurrentTab() != nullptr) {
-		g_gui.GetCurrentMapTab()->GetEventHandler()->AddPendingEvent(event);
+	MapCanvas* canvas = g_gui.GetActiveMapCanvas();
+	if (canvas) {
+		canvas->GetEventHandler()->AddPendingEvent(event);
 	}
 }
 
@@ -616,7 +651,7 @@ MinimapWindow::BlockPtr MinimapWindow::getBlock(int x, int y) {
 }
 
 void MinimapWindow::updateBlock(BlockPtr block, int startX, int startY, int floor) {
-	Editor& editor = *g_gui.GetCurrentEditor();
+	Editor& editor = *GetMinimapEditor();
 	
 	// Always update if the block's floor doesn't match current floor
 	if (!block->needsUpdate && block->floor != floor) {
@@ -755,7 +790,7 @@ void MinimapWindow::TeleportToMinimapWaypoint(int idx) {
 	RefreshMap();
 	// Optionally, also move the main view:
 	if (g_gui.IsEditorOpen()) {
-		g_gui.GetCurrentMapTab()->SetScreenCenterPosition(wp.pos);
+		g_gui.SetScreenCenterPosition(wp.pos);
 	}
 }
 
@@ -812,7 +847,7 @@ void MinimapWindow::OnLoadMinimapWaypoints(wxCommandEvent& event) {
 
 bool MinimapWindow::CacheFilledBlocksForFloor(int floor) {
 	if (!g_gui.IsEditorOpen()) return false;
-	Editor& editor = *g_gui.GetCurrentEditor();
+	Editor& editor = *GetMinimapEditor();
 	int mapWidth = editor.map.getWidth();
 	int mapHeight = editor.map.getHeight();
 	int numBlocksX = (mapWidth + BLOCK_SIZE - 1) / BLOCK_SIZE;
@@ -923,7 +958,7 @@ void MinimapWindow::RemoveBlockCacheForFloor(int floor) {
 
 bool MinimapWindow::IsBlockFilled(int bx, int by, int floor) {
 	if (!g_gui.IsEditorOpen()) return false;
-	Editor& editor = *g_gui.GetCurrentEditor();
+	Editor& editor = *GetMinimapEditor();
 	int startX = bx * BLOCK_SIZE;
 	int startY = by * BLOCK_SIZE;
 	for (int y = 0; y < BLOCK_SIZE; ++y) {
@@ -939,7 +974,7 @@ bool MinimapWindow::IsBlockFilled(int bx, int by, int floor) {
 
 wxBitmap MinimapWindow::RenderBlock(int bx, int by, int floor) {
 	if (!g_gui.IsEditorOpen()) return wxBitmap(BLOCK_SIZE, BLOCK_SIZE);
-	Editor& editor = *g_gui.GetCurrentEditor();
+	Editor& editor = *GetMinimapEditor();
 	wxBitmap bitmap(BLOCK_SIZE, BLOCK_SIZE);
 	wxMemoryDC dc(bitmap);
 	dc.SetBackground(*wxBLACK_BRUSH);
@@ -963,7 +998,7 @@ wxBitmap MinimapWindow::RenderBlock(int bx, int by, int floor) {
 
 wxString MinimapWindow::GetCurrentMapName() const {
 	if (!g_gui.IsEditorOpen()) return "unnamed";
-	Editor* editor = g_gui.GetCurrentEditor();
+	Editor* editor = GetMinimapEditor();
 	if (!editor) return "unnamed";
 	wxString mapName = editor->map.getName();
 	if (mapName.IsEmpty()) mapName = "unnamed";

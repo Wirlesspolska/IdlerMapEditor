@@ -169,6 +169,7 @@
 #include "minimap_window.h"
 #include "palette_window.h"
 #include "map_display.h"
+#include "map_window.h"
 #include "application.h"
 #include "welcome_dialog.h"
 
@@ -177,6 +178,7 @@
 #include "live_server.h"
 #include "recent_brushes_window.h"
 #include "monster_maker_window.h"
+#include "preferences.h"
 #include "dark_mode_manager.h"
 #include <wx/regex.h>
 
@@ -200,6 +202,7 @@ GUI::GUI() :
 	search_result_window(nullptr),
 	map_summary_window(nullptr),
 	monster_maker_window(nullptr),
+	preferences_window(nullptr),
 	loaded_version(CLIENT_VERSION_NONE),
 	secondary_map(nullptr),
 	minimap(nullptr),
@@ -699,17 +702,17 @@ bool GUI::IsEditorOpen() const {
 }
 
 double GUI::GetCurrentZoom() {
-	MapTab* tab = GetCurrentMapTab();
-	if (tab) {
-		return tab->GetCanvas()->GetZoom();
+	MapCanvas* canvas = GetActiveMapCanvas();
+	if (canvas) {
+		return canvas->GetZoom();
 	}
 	return 1.0;
 }
 
 void GUI::SetCurrentZoom(double zoom) {
-	MapTab* tab = GetCurrentMapTab();
-	if (tab) {
-		tab->GetCanvas()->SetZoom(zoom);
+	MapCanvas* canvas = GetActiveMapCanvas();
+	if (canvas) {
+		canvas->SetZoom(zoom);
 	}
 }
 
@@ -1189,6 +1192,45 @@ MapTab* GUI::GetCurrentMapTab() const {
 	return nullptr;
 }
 
+namespace {
+MapCanvas* FindMapCanvasFromWindow(wxWindow* window) {
+	while (window) {
+		if (auto* canvas = dynamic_cast<MapCanvas*>(window)) {
+			return canvas;
+		}
+		if (auto* mapWindow = dynamic_cast<MapWindow*>(window)) {
+			return mapWindow->GetCanvas();
+		}
+		window = window->GetParent();
+	}
+	return nullptr;
+}
+} // namespace
+
+MapCanvas* GUI::GetFocusedMapCanvas() const {
+	wxWindow* focus = wxWindow::FindFocus();
+	if (!focus) {
+		return nullptr;
+	}
+	return FindMapCanvasFromWindow(focus);
+}
+
+MapCanvas* GUI::GetActiveMapCanvas() const {
+	if (MapCanvas* focused = GetFocusedMapCanvas()) {
+		return focused;
+	}
+	MapTab* tab = GetCurrentMapTab();
+	return tab ? tab->GetCanvas() : nullptr;
+}
+
+MapWindow* GUI::GetActiveMapWindow() const {
+	MapCanvas* canvas = GetActiveMapCanvas();
+	if (!canvas) {
+		return nullptr;
+	}
+	return static_cast<MapWindow*>(canvas->GetParent());
+}
+
 Map& GUI::GetCurrentMap() {
 	Editor* editor = GetCurrentEditor();
 	ASSERT(editor);
@@ -1486,6 +1528,20 @@ void GUI::NewDetachedMapView() {
                 
                 // Show the window
                 detachedFrame->Show();
+                newMapWindow->GetCanvas()->SetFocus();
+
+                detachedFrame->Bind(wxEVT_ACTIVATE, [newMapWindow](wxActivateEvent& event) {
+                    if (event.GetActive() && newMapWindow->GetCanvas()) {
+                        newMapWindow->GetCanvas()->SetFocus();
+                    }
+                });
+
+                newMapWindow->Bind(wxEVT_LEFT_DOWN, [newMapWindow](wxMouseEvent& event) {
+                    if (newMapWindow->GetCanvas()) {
+                        newMapWindow->GetCanvas()->SetFocus();
+                    }
+                    event.Skip();
+                });
                 
                 SetStatusText(selection == 0 ? "Created new detached view" : "Created new always-on-top view");
             } 
@@ -1523,6 +1579,13 @@ void GUI::NewDetachedMapView() {
                 
                 // Register the dockable view
                 RegisterDockableView(mapTab->GetEditor(), newMapWindow);
+
+                newMapWindow->Bind(wxEVT_LEFT_DOWN, [newMapWindow](wxMouseEvent& event) {
+                    if (newMapWindow->GetCanvas()) {
+                        newMapWindow->GetCanvas()->SetFocus();
+                    }
+                    event.Skip();
+                });
                 
                 // Bind cleanup event to remove the window from our registry when destroyed
                 newMapWindow->Bind(wxEVT_DESTROY, [=](wxWindowDestroyEvent& event) {
@@ -1807,6 +1870,35 @@ MonsterMakerWindow* GUI::ShowMonsterMakerWindow() {
 	monster_maker_window->Raise();
 	
 	return monster_maker_window;
+}
+
+void GUI::HidePreferencesWindow() {
+	if (preferences_window) {
+		preferences_window->Close();
+	}
+}
+
+PreferencesWindow* GUI::GetPreferencesWindow() {
+	return preferences_window;
+}
+
+void GUI::ShowPreferencesWindow(bool clientVersionSelected) {
+	if (preferences_window && !preferences_window->IsBeingDeleted()) {
+		if (!preferences_window->IsShown()) {
+			preferences_window->Show(true);
+		}
+		if (clientVersionSelected) {
+			preferences_window->SelectClientVersionPage();
+		}
+		preferences_window->Raise();
+		return;
+	}
+
+	preferences_window = newd PreferencesWindow(root, clientVersionSelected);
+	preferences_window->Bind(wxEVT_DESTROY, [this](wxWindowDestroyEvent&) {
+		preferences_window = nullptr;
+	});
+	preferences_window->Show(true);
 }
 
 //=============================================================================
@@ -2221,13 +2313,13 @@ void GUI::UpdateMenubar() {
 }
 
 void GUI::SetScreenCenterPosition(Position position) {
-	MapTab* mapTab = GetCurrentMapTab();
-	if (mapTab) {
+	MapWindow* mapWindow = GetActiveMapWindow();
+	if (mapWindow) {
 		// Store old position for comparison
-		Position oldPosition = mapTab->GetScreenCenterPosition();
+		Position oldPosition = mapWindow->GetScreenCenterPosition();
 		
 		// Set the new position
-		mapTab->SetScreenCenterPosition(position);
+		mapWindow->SetScreenCenterPosition(position);
 		
 		// Update minimap if the position changed significantly (e.g., teleport/goto)
 		// or if the floor changed
@@ -2368,25 +2460,27 @@ bool GUI::DoRedo() {
 }
 
 int GUI::GetCurrentFloor() {
-	MapTab* tab = GetCurrentMapTab();
-	ASSERT(tab);
-	return tab->GetCanvas()->GetFloor();
+	MapCanvas* canvas = GetActiveMapCanvas();
+	ASSERT(canvas);
+	return canvas->GetFloor();
 }
 
 void GUI::ChangeFloor(int new_floor) {
-	MapTab* tab = GetCurrentMapTab();
-	if (tab) {
-		int old_floor = GetCurrentFloor();
-		if (new_floor < 0 || new_floor > MAP_MAX_LAYER) {
-			return;
-		}
+	MapCanvas* canvas = GetActiveMapCanvas();
+	if (!canvas) {
+		return;
+	}
 
-		if (old_floor != new_floor) {
-			tab->GetCanvas()->ChangeFloor(new_floor);
-			// Only refresh minimap if it's visible - it will use cached blocks for the new floor
-			if (minimap && IsMinimapVisible()) {
-				minimap->SetMinimapFloor(new_floor);
-			}
+	int old_floor = canvas->GetFloor();
+	if (new_floor < 0 || new_floor > MAP_MAX_LAYER) {
+		return;
+	}
+
+	if (old_floor != new_floor) {
+		canvas->ChangeFloor(new_floor);
+		// Only refresh minimap if it's visible - it will use cached blocks for the new floor
+		if (minimap && IsMinimapVisible()) {
+			minimap->SetMinimapFloor(new_floor);
 		}
 	}
 }
@@ -2570,6 +2664,10 @@ void GUI::SetBrushSize(int nz) {
 	
 	for (PaletteList::iterator iter = palettes.begin(); iter != palettes.end(); ++iter) {
 		(*iter)->OnUpdateBrushSize(brush_shape, brush_size);
+	}
+
+	if (root) {
+		root->GetAuiToolBar()->UpdateBrushSize(brush_shape, brush_size);
 	}
 }
 
@@ -3544,6 +3642,10 @@ void GUI::SetCustomBrushSize(bool enable, int width, int height) {
 			palette->OnUpdateBrushSize(brush_shape, brush_size);
 		}
 	}
-	
+
+	if (root) {
+		root->GetAuiToolBar()->UpdateBrushSizeControls();
+	}
+
 	RefreshView();
 }

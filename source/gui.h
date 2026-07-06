@@ -234,6 +234,11 @@ public:
 	MonsterMakerWindow* ShowMonsterMakerWindow();
 	void HideMonsterMakerWindow();
 
+	// Preferences
+	PreferencesWindow* GetPreferencesWindow();
+	void ShowPreferencesWindow(bool clientVersionSelected = false);
+	void HidePreferencesWindow();
+
 	// Map Summary
 	MapSummaryWindow* GetMapSummaryWindow();
 	MapSummaryWindow* ShowMapSummaryWindow();
@@ -376,6 +381,9 @@ public:
 	void CloseCurrentEditor();
 	Editor* GetCurrentEditor();
 	MapTab* GetCurrentMapTab() const;
+	MapCanvas* GetFocusedMapCanvas() const;
+	MapCanvas* GetActiveMapCanvas() const;
+	MapWindow* GetActiveMapWindow() const;
 	void CycleTab(bool forward = true);
 	bool CloseLiveEditors(LiveSocket* sock);
 	bool CloseAllEditors();
@@ -470,6 +478,7 @@ public:
 	MonsterManager monster_manager;
 	NPCManager npc_manager;
 	MonsterMakerWindow* monster_maker_window;
+	PreferencesWindow* preferences_window;
 
 	BaseMap* secondary_map; // A non-owning pointer to doodad_buffer_map when needed
 	std::unique_ptr<BaseMap> doodad_buffer_map; // The map in which doodads are temporarily stored

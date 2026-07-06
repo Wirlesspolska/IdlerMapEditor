@@ -629,6 +629,13 @@ void MapCanvas::OnMouseLeftRelease(wxMouseEvent& event) {
 }
 
 void MapCanvas::OnMouseLeftClick(wxMouseEvent& event) {
+	const float glx = float(event.GetX() * GetContentScaleFactor()) * float(zoom);
+	const float gly = float(event.GetY() * GetContentScaleFactor()) * float(zoom);
+	if (!g_gui.IsDrawingMode() && drawer->HandleContainerTooltipNavClick(glx, gly)) {
+		g_gui.RefreshView();
+		return;
+	}
+
 	OnMouseActionClick(event);
 }
 

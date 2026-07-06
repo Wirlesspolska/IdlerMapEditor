@@ -32,6 +32,7 @@
 #include "live_socket.h"
 #include "graphics.h"
 #include "settings.h"
+#include "complexitem.h"
 
 #include "doodad_brush.h"
 #include "creature_brush.h"
@@ -328,6 +329,8 @@ void MapDrawer::SetupVars() {
 	canvas->MouseToMap(&mouse_map_x, &mouse_map_y);
 	canvas->GetViewBox(&view_scroll_x, &view_scroll_y, &screensize_x, &screensize_y);
 
+	container_nav_hits.clear();
+
 	dragging = canvas->dragging;
 	dragging_draw = canvas->dragging_draw;
 
@@ -479,6 +482,11 @@ void MapDrawer::Release() {
 		delete *it;
 	}
 	tooltips.clear();
+
+	for (std::vector<ContainerContentsTooltip*>::const_iterator it = container_tooltips.begin(); it != container_tooltips.end(); ++it) {
+		delete *it;
+	}
+	container_tooltips.clear();
 
 	if (light_drawer) {
 		light_drawer->clear();
@@ -1585,50 +1593,78 @@ void MapDrawer::BlitItem(int& draw_x, int& draw_y, const Position& pos, Item* it
 
 	// item sprite
 	GameSprite* spr = it.sprite;
+	bool tech_overlay = false;
+	int tech_overlay_red = 0;
+	int tech_overlay_green = 0;
+	int tech_overlay_blue = 0;
+	int tech_overlay_alpha = 0;
 
 	// Display invisible and invalid items
 	if (!options.ingame && options.show_tech_items) {
+		const bool sprite_transparency = g_gui.gfx.hasTransparency();
+		auto drawTechOverlay = [&](int overlay_red, int overlay_green, int overlay_blue, int overlay_alpha) {
+			if (sprite_transparency && spr != nullptr && !it.isMetaItem()) {
+				tech_overlay = true;
+				tech_overlay_red = overlay_red;
+				tech_overlay_green = overlay_green;
+				tech_overlay_blue = overlay_blue;
+				tech_overlay_alpha = overlay_alpha;
+				return;
+			}
+			BlitSquare(draw_x, draw_y, overlay_red, overlay_green, overlay_blue, overlay_alpha);
+		};
+
 		// Check for custom colors first
 		int custom_red, custom_green, custom_blue;
 		if (InvisibleItemsColorManager::GetCustomColor(it.clientID, custom_red, custom_green, custom_blue)) {
-			BlitSquare(draw_x, draw_y, custom_red, custom_green, custom_blue, alpha / 3 * 2);
-			return;
-		}
-
-		// Red invalid client id
-		if (it.id == 0) {
+			drawTechOverlay(custom_red, custom_green, custom_blue, alpha / 3 * 2);
+			if (!tech_overlay) {
+				return;
+			}
+		} else if (it.id == 0) {
 			auto color = InvisibleItemsColorManager::GetInvalidItemColor();
-			BlitSquare(draw_x, draw_y, color.red, color.green, color.blue, alpha);
-			return;
-		}
-
-		switch (it.clientID) {
-			// Yellow invisible stairs tile (459)
-			case 469: {
-				auto color = InvisibleItemsColorManager::GetInvisibleStairsColor();
-				BlitSquare(draw_x, draw_y, color.red, color.green, color.blue, alpha / 3 * 2);
+			drawTechOverlay(color.red, color.green, color.blue, alpha);
+			if (!tech_overlay) {
 				return;
 			}
+		} else {
+			switch (it.clientID) {
+				// Yellow invisible stairs tile (459)
+				case 469: {
+					auto color = InvisibleItemsColorManager::GetInvisibleStairsColor();
+					drawTechOverlay(color.red, color.green, color.blue, alpha / 3 * 2);
+					if (!tech_overlay) {
+						return;
+					}
+					break;
+				}
 
-			// Red invisible walkable tile (460)
-			case 470:
-			case 17970:
-			case 20028:
-			case 34168: {
-				auto color = InvisibleItemsColorManager::GetInvisibleWalkableColor();
-				BlitSquare(draw_x, draw_y, color.red, color.green, color.blue, alpha / 3 * 2);
-				return;
+				// Red invisible walkable tile (460)
+				case 470:
+				case 17970:
+				case 20028:
+				case 34168: {
+					auto color = InvisibleItemsColorManager::GetInvisibleWalkableColor();
+					drawTechOverlay(color.red, color.green, color.blue, alpha / 3 * 2);
+					if (!tech_overlay) {
+						return;
+					}
+					break;
+				}
+
+				// Cyan invisible wall (1548)
+				case 2187: {
+					auto color = InvisibleItemsColorManager::GetInvisibleWallColor();
+					drawTechOverlay(color.red, color.green, color.blue, 80);
+					if (!tech_overlay) {
+						return;
+					}
+					break;
+				}
+
+				default:
+					break;
 			}
-
-			// Cyan invisible wall (1548)
-			case 2187: {
-				auto color = InvisibleItemsColorManager::GetInvisibleWallColor();
-				BlitSquare(draw_x, draw_y, color.red, color.green, color.blue, 80);
-				return;
-			}
-
-			default:
-				break;
 		}
 
 		// primal light
@@ -1636,6 +1672,7 @@ void MapDrawer::BlitItem(int& draw_x, int& draw_y, const Position& pos, Item* it
 			spr = g_items[SPRITE_LIGHTSOURCE].sprite;
 			red = 0;
 			alpha = 180;
+			tech_overlay = false;
 		}
 	}
 
@@ -1708,6 +1745,10 @@ void MapDrawer::BlitItem(int& draw_x, int& draw_y, const Position& pos, Item* it
 				glBlitTexture(screenx - cx * TileSize, screeny - cy * TileSize, texnum, red, green, blue, alpha);
 			}
 		}
+	}
+
+	if (tech_overlay) {
+		BlitSquare(draw_x, draw_y, tech_overlay_red, tech_overlay_green, tech_overlay_blue, tech_overlay_alpha);
 	}
 
 	// zoomed out very far, avoid drawing stuff barely visible
@@ -2330,6 +2371,34 @@ void MapDrawer::DrawTile(TileLocation* location) {
 
 			// tooltips
 			if (options.show_tooltips && zoom <= g_settings.getInteger(Config::TOOLTIP_MAX_ZOOM)) {
+				if (g_settings.getBoolean(Config::TOOLTIP_SHOW_CONTAINER_CONTAINS)) {
+					std::vector<Container*> containersWithContents;
+					auto addContainerIfFilled = [&](Item* item) {
+						if (!item) {
+							return;
+						}
+						if (Container* container = dynamic_cast<Container*>(item)) {
+							if (container->getItemCount() > 0) {
+								containersWithContents.push_back(container);
+							}
+						}
+					};
+
+					for (ItemVector::reverse_iterator it = tile->items.rbegin(); it != tile->items.rend(); ++it) {
+						addContainerIfFilled(*it);
+					}
+					addContainerIfFilled(tile->ground);
+
+					if (!containersWithContents.empty()) {
+						int containerTooltipY = draw_y;
+						if (tooltip.tellp() > 0) {
+							const float scale = zoom < 1.0f ? zoom : 1.0f;
+							containerTooltipY -= int(18.0f * scale);
+						}
+						MakeContainerContentsTooltip(draw_x, containerTooltipY, Position(map_x, map_y, map_z), containersWithContents);
+					}
+				}
+
 				if (location->getWaypointCount() > 0) {
 					MakeTooltip(draw_x, draw_y, tooltip.str(), 0, 255, 0);
 				} else {
@@ -2518,6 +2587,8 @@ void MapDrawer::DrawTooltips() {
 			}
 		}
 	}
+
+	DrawContainerContentsTooltips();
 }
 
 void MapDrawer::DrawLight() {
@@ -2533,6 +2604,281 @@ void MapDrawer::MakeTooltip(int screenx, int screeny, const std::string& text, u
 	MapTooltip* tooltip = newd MapTooltip(screenx, screeny, text, r, g, b);
 	tooltip->checkLineEnding();
 	tooltips.push_back(tooltip);
+}
+
+namespace {
+uint64_t containerTooltipPositionKey(const Position& pos) {
+	return (uint64_t(uint32_t(pos.x)) << 32) | (uint64_t(uint32_t(pos.y)) << 16) | uint64_t(pos.z);
+}
+} // namespace
+
+void MapDrawer::MakeContainerContentsTooltip(int screenx, int screeny, const Position& mapPos, const std::vector<Container*>& containers) {
+	if (zoom > g_settings.getInteger(Config::TOOLTIP_MAX_ZOOM) || containers.empty()) {
+		return;
+	}
+
+	const uint64_t key = containerTooltipPositionKey(mapPos);
+	int selectedIndex = 0;
+	auto selectionIt = container_tooltip_selection.find(key);
+	if (selectionIt != container_tooltip_selection.end()) {
+		selectedIndex = selectionIt->second;
+	}
+	if (selectedIndex < 0 || selectedIndex >= static_cast<int>(containers.size())) {
+		selectedIndex = 0;
+		container_tooltip_selection[key] = selectedIndex;
+	}
+
+	ContainerContentsTooltip* tooltip = newd ContainerContentsTooltip(screenx, screeny, mapPos, containers, selectedIndex);
+	container_tooltips.push_back(tooltip);
+}
+
+void MapDrawer::glBlitTexture(int sx, int sy, int texture_number, int size, int red, int green, int blue, int alpha) {
+	if (texture_number != 0) {
+		glBindTexture(GL_TEXTURE_2D, texture_number);
+		glColor4ub(uint8_t(red), uint8_t(green), uint8_t(blue), uint8_t(alpha));
+		glBegin(GL_QUADS);
+		glTexCoord2f(0.f, 0.f);
+		glVertex2f(sx, sy);
+		glTexCoord2f(1.f, 0.f);
+		glVertex2f(sx + size, sy);
+		glTexCoord2f(1.f, 1.f);
+		glVertex2f(sx + size, sy + size);
+		glTexCoord2f(0.f, 1.f);
+		glVertex2f(sx, sy + size);
+		glEnd();
+	}
+}
+
+void MapDrawer::BlitItemIcon(int screenx, int screeny, Item* item, int size, const Position& pos, const Tile* tile) {
+	if (!item || size <= 0) {
+		return;
+	}
+
+	ItemType& it = g_items[item->getID()];
+	GameSprite* spr = it.sprite;
+	if (it.isMetaItem() || spr == nullptr) {
+		return;
+	}
+
+	int pattern_x = pos.x % spr->pattern_x;
+	int pattern_y = pos.y % spr->pattern_y;
+	int pattern_z = pos.z % spr->pattern_z;
+	int subtype = -1;
+
+	if (it.isSplash() || it.isFluidContainer()) {
+		subtype = item->getSubtype();
+	} else if (it.isHangable) {
+		if (tile && tile->hasProperty(HOOK_SOUTH)) {
+			pattern_x = 1;
+		} else if (tile && tile->hasProperty(HOOK_EAST)) {
+			pattern_x = 2;
+		} else {
+			pattern_x = 0;
+		}
+	} else if (it.stackable) {
+		if (item->getSubtype() <= 1) {
+			subtype = 0;
+		} else if (item->getSubtype() <= 2) {
+			subtype = 1;
+		} else if (item->getSubtype() <= 3) {
+			subtype = 2;
+		} else if (item->getSubtype() <= 4) {
+			subtype = 3;
+		} else if (item->getSubtype() < 10) {
+			subtype = 4;
+		} else if (item->getSubtype() < 25) {
+			subtype = 5;
+		} else if (item->getSubtype() < 50) {
+			subtype = 6;
+		} else {
+			subtype = 7;
+		}
+	}
+
+	const int frame = item->getFrame();
+	const int iconCenterX = screenx + size / 2;
+	const int iconCenterY = screeny + size / 2;
+
+	for (int cx = 0; cx != spr->width; ++cx) {
+		for (int cy = 0; cy != spr->height; ++cy) {
+			for (int cf = 0; cf != spr->layers; ++cf) {
+				const int texnum = spr->getHardwareID(cx, cy, cf, subtype, pattern_x, pattern_y, pattern_z, frame);
+				const int drawOffsetX = spr->getDrawOffset().first;
+				const int drawOffsetY = spr->getDrawOffset().second;
+				const int drawHeight = spr->getDrawHeight();
+				const float scale = float(size) / float(TileSize);
+
+				const int sx = iconCenterX - int((drawOffsetX + cx * TileSize - drawHeight) * scale);
+				const int sy = iconCenterY - int((drawOffsetY + cy * TileSize - drawHeight) * scale);
+				const int scaledTile = std::max(1, int(TileSize * scale));
+				glBlitTexture(sx, sy, texnum, scaledTile, 255, 255, 255, 255);
+			}
+		}
+	}
+}
+
+void MapDrawer::DrawContainerContentsTooltips() {
+	if (zoom > 1.0f) {
+		return;
+	}
+
+	const float scale = zoom < 1.0f ? zoom : 1.0f;
+	const int spriteSize = int(ContainerContentsTooltip::SPRITE_SIZE * scale);
+	const int spacing = int(ContainerContentsTooltip::SPACING * scale);
+	const int padding = int(ContainerContentsTooltip::PADDING * scale);
+	const int navSize = int(ContainerContentsTooltip::NAV_SIZE * scale);
+	const int cellSize = spriteSize + spacing;
+
+	for (std::vector<ContainerContentsTooltip*>::const_iterator it = container_tooltips.begin(); it != container_tooltips.end(); ++it) {
+		ContainerContentsTooltip* tooltip = *it;
+		if (tooltip->containers.empty()) {
+			continue;
+		}
+
+		if (tooltip->selectedIndex < 0 || tooltip->selectedIndex >= static_cast<int>(tooltip->containers.size())) {
+			tooltip->selectedIndex = 0;
+		}
+
+		Container* container = tooltip->containers[tooltip->selectedIndex];
+		if (!container || container->getItemCount() == 0) {
+			continue;
+		}
+
+		const size_t itemCount = container->getItemCount();
+		const bool hasNav = tooltip->containers.size() > 1;
+		const size_t totalCells = itemCount + (hasNav ? 1 : 0);
+		const int cols = int(std::min(totalCells, size_t(ContainerContentsTooltip::MAX_COLS)));
+		const int rows = int((totalCells + ContainerContentsTooltip::MAX_COLS - 1) / ContainerContentsTooltip::MAX_COLS);
+
+		const float width = padding * 2 + cols * cellSize - spacing;
+		const float height = padding * 2 + rows * cellSize - spacing;
+
+		const float x = tooltip->x + (TileSize / 2.0f);
+		const float y = tooltip->y;
+		const float center = width / 2.0f;
+		const float space = 7.0f * scale;
+		const float startx = x - center;
+		const float endx = x + center;
+		const float starty = y - (height + space);
+		const float endy = y - space;
+
+		float vertexes[9][2] = {
+			{ x, starty },
+			{ endx, starty },
+			{ endx, endy },
+			{ x + space, endy },
+			{ x, y },
+			{ x - space, endy },
+			{ startx, endy },
+			{ startx, starty },
+			{ x, starty },
+		};
+
+		glColor4ub(255, 255, 255, 255);
+		glBegin(GL_POLYGON);
+		for (int i = 0; i < 8; ++i) {
+			glVertex2f(vertexes[i][0], vertexes[i][1]);
+		}
+		glEnd();
+
+		glColor4ub(0, 0, 0, 255);
+		glLineWidth(1.0);
+		glBegin(GL_LINES);
+		for (int i = 0; i < 8; ++i) {
+			glVertex2f(vertexes[i][0], vertexes[i][1]);
+			glVertex2f(vertexes[i + 1][0], vertexes[i + 1][1]);
+		}
+		glEnd();
+
+		glEnable(GL_TEXTURE_2D);
+		const float contentStartX = startx + padding;
+		const float contentStartY = starty + padding;
+
+		for (size_t index = 0; index < itemCount; ++index) {
+			const int col = int(index % ContainerContentsTooltip::MAX_COLS);
+			const int row = int(index / ContainerContentsTooltip::MAX_COLS);
+			const int iconX = int(contentStartX + col * cellSize);
+			const int iconY = int(contentStartY + row * cellSize);
+			BlitItemIcon(iconX, iconY, container->getItem(index), spriteSize, tooltip->mapPos);
+		}
+
+		tooltip->hasNav = hasNav;
+		if (hasNav) {
+			const int navIndex = int(itemCount);
+			const int col = navIndex % ContainerContentsTooltip::MAX_COLS;
+			const int row = navIndex / ContainerContentsTooltip::MAX_COLS;
+			const float navX = contentStartX + col * cellSize + (spriteSize - navSize) / 2.0f;
+			const float navY = contentStartY + row * cellSize + (spriteSize - navSize) / 2.0f;
+
+			tooltip->navLeft = navX;
+			tooltip->navTop = navY;
+			tooltip->navRight = navX + navSize;
+			tooltip->navBottom = navY + navSize;
+
+			glDisable(GL_TEXTURE_2D);
+			glColor4ub(220, 220, 220, 255);
+			glBegin(GL_QUADS);
+			glVertex2f(navX, navY);
+			glVertex2f(navX + navSize, navY);
+			glVertex2f(navX + navSize, navY + navSize);
+			glVertex2f(navX, navY + navSize);
+			glEnd();
+
+			const float arrowCenterX = navX + navSize / 2.0f;
+			const float arrowTop = navY + navSize * 0.25f;
+			const float arrowBottom = navY + navSize * 0.75f;
+			const float arrowHalfWidth = navSize * 0.22f;
+
+			glColor4ub(40, 40, 40, 255);
+			glBegin(GL_TRIANGLES);
+			glVertex2f(arrowCenterX, arrowBottom);
+			glVertex2f(arrowCenterX - arrowHalfWidth, arrowTop);
+			glVertex2f(arrowCenterX + arrowHalfWidth, arrowTop);
+			glEnd();
+
+			glColor4ub(0, 0, 0, 255);
+			glBegin(GL_LINE_LOOP);
+			glVertex2f(navX, navY);
+			glVertex2f(navX + navSize, navY);
+			glVertex2f(navX + navSize, navY + navSize);
+			glVertex2f(navX, navY + navSize);
+			glEnd();
+			glEnable(GL_TEXTURE_2D);
+
+			container_nav_hits.push_back(ContainerTooltipNavHit{
+				tooltip->mapPos,
+				tooltip->navLeft,
+				tooltip->navTop,
+				tooltip->navRight,
+				tooltip->navBottom,
+				int(tooltip->containers.size()),
+			});
+		}
+	}
+}
+
+bool MapDrawer::HandleContainerTooltipNavClick(float glx, float gly) {
+	if (!g_settings.getBoolean(Config::TOOLTIP_SHOW_CONTAINER_CONTAINS) || zoom > 1.0f) {
+		return false;
+	}
+
+	for (const ContainerTooltipNavHit& hit : container_nav_hits) {
+		if (glx >= hit.navLeft && glx <= hit.navRight && gly >= hit.navTop && gly <= hit.navBottom) {
+			const uint64_t key = containerTooltipPositionKey(hit.mapPos);
+			int selectedIndex = 0;
+			auto selectionIt = container_tooltip_selection.find(key);
+			if (selectionIt != container_tooltip_selection.end()) {
+				selectedIndex = selectionIt->second;
+			}
+			int nextIndex = selectedIndex + 1;
+			if (nextIndex >= hit.containerCount) {
+				nextIndex = 0;
+			}
+			container_tooltip_selection[key] = nextIndex;
+			return true;
+		}
+	}
+	return false;
 }
 
 void MapDrawer::AddLight(TileLocation* location) {

@@ -127,6 +127,12 @@ public:
 	int GetFloor() const {
 		return floor;
 	}
+	Editor& GetEditor() {
+		return editor;
+	}
+	const Editor& GetEditor() const {
+		return editor;
+	}
 	double GetZoom() const {
 		return zoom;
 	}

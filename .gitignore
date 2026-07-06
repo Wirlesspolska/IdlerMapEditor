@@ -55,3 +55,5 @@ cmake-build-debug/
 *.obj
 *.pdb
 /nodechatserver/node_modules
+/vcproj/Project/Editor/x64/Release/Editor.tlog
+vcproj/Project/Editor/x64/Release/IdlerMapEditor.iobj

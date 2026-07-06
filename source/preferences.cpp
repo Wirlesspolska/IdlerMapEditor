@@ -49,20 +49,21 @@ EVT_BUTTON(wxID_CANCEL, PreferencesWindow::OnClickCancel)
 EVT_BUTTON(wxID_APPLY, PreferencesWindow::OnClickApply)
 EVT_BUTTON(wxID_ANY, PreferencesWindow::OnForceReloadRevScripts)
 EVT_COLLAPSIBLEPANE_CHANGED(wxID_ANY, PreferencesWindow::OnCollapsiblePane)
+EVT_CLOSE(PreferencesWindow::OnClose)
 END_EVENT_TABLE()
 
 PreferencesWindow::PreferencesWindow(wxWindow* parent, bool clientVersionSelected = false) :
-	wxDialog(parent, wxID_ANY, "Preferences", wxDefaultPosition, wxSize(400, 400), wxCAPTION | wxCLOSE_BOX) {
+	wxDialog(parent, wxID_ANY, "Preferences", wxDefaultPosition, FROM_DIP(parent, wxSize(640, 520)),
+		wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER) {
 	wxSizer* sizer = newd wxBoxSizer(wxVERTICAL);
 
-	book = newd wxNotebook(this, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxBK_TOP);
-	// book->SetPadding(4);
+	book = newd wxListbook(this, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxLB_LEFT);
 
 	book->AddPage(CreateGeneralPage(), "General", true);
 	book->AddPage(CreateEditorPage(), "Editor");
 	book->AddPage(CreateGraphicsPage(), "Graphics");
 	book->AddPage(CreateUIPage(), "Interface");
-	book->AddPage(CreateClientPage(), "Client Version", clientVersionSelected);
+	book->AddPage(CreateClientPage(), "Client Version");
 	book->AddPage(CreateLODPage(), "LOD");
 	book->AddPage(CreateAutomagicPage(), "Automagic");
 	book->AddPage(CreateTooltipInfoPage(), "Tooltip Info");
@@ -71,14 +72,19 @@ PreferencesWindow::PreferencesWindow(wxWindow* parent, bool clientVersionSelecte
 	sizer->Add(book, 1, wxEXPAND | wxALL, 10);
 
 	wxSizer* subsizer = newd wxBoxSizer(wxHORIZONTAL);
-	subsizer->Add(newd wxButton(this, wxID_OK, "OK"), wxSizerFlags(1).Center());
-	subsizer->Add(newd wxButton(this, wxID_CANCEL, "Cancel"), wxSizerFlags(1).Border(wxALL, 5).Left().Center());
-	subsizer->Add(newd wxButton(this, wxID_APPLY, "Apply"), wxSizerFlags(1).Center());
-	sizer->Add(subsizer, 0, wxCENTER | wxLEFT | wxBOTTOM | wxRIGHT, 10);
+	subsizer->AddStretchSpacer();
+	subsizer->Add(newd wxButton(this, wxID_OK, "OK"), 0, wxALL, 5);
+	subsizer->Add(newd wxButton(this, wxID_CANCEL, "Cancel"), 0, wxALL, 5);
+	subsizer->Add(newd wxButton(this, wxID_APPLY, "Apply"), 0, wxALL, 5);
+	sizer->Add(subsizer, 0, wxEXPAND | wxLEFT | wxBOTTOM | wxRIGHT, 10);
 
-	SetSizerAndFit(sizer);
-	Centre(wxBOTH);
-	// FindWindowById(PANE_ADVANCED_GRAPHICS, this)->GetParent()->Fit();
+	SetMinSize(FROM_DIP(parent, wxSize(560, 480)));
+	SetSizer(sizer);
+	CentreOnParent();
+
+	if (clientVersionSelected) {
+		SelectClientVersionPage();
+	}
 }
 
 PreferencesWindow::~PreferencesWindow() {
@@ -86,7 +92,8 @@ PreferencesWindow::~PreferencesWindow() {
 }
 
 wxNotebookPage* PreferencesWindow::CreateGeneralPage() {
-	wxNotebookPage* general_page = newd wxPanel(book, wxID_ANY);
+	wxScrolledWindow* general_page = newd wxScrolledWindow(book, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxVSCROLL);
+	general_page->SetScrollRate(10, 10);
 
 	wxSizer* sizer = newd wxBoxSizer(wxVERTICAL);
 	wxStaticText* tmptext;
@@ -197,13 +204,15 @@ wxNotebookPage* PreferencesWindow::CreateGeneralPage() {
 	sizer->Add(position_format, 0, wxALL | wxEXPAND, 5);
 	SetWindowToolTip(tmptext, position_format, "The position format when copying from the map.");
 
-	general_page->SetSizerAndFit(sizer);
+	general_page->SetSizer(sizer);
+	general_page->FitInside();
 
 	return general_page;
 }
 
 wxNotebookPage* PreferencesWindow::CreateEditorPage() {
-	wxNotebookPage* editor_page = newd wxPanel(book, wxID_ANY);
+	wxScrolledWindow* editor_page = newd wxScrolledWindow(book, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxVSCROLL);
+	editor_page->SetScrollRate(10, 10);
 
 	wxSizer* sizer = newd wxBoxSizer(wxVERTICAL);
 
@@ -279,14 +288,16 @@ wxNotebookPage* PreferencesWindow::CreateEditorPage() {
 	
 	sizer->Add(refresh_sizer, 0, wxLEFT | wxTOP | wxEXPAND, 5);
 
-	editor_page->SetSizerAndFit(sizer);
+	editor_page->SetSizer(sizer);
+	editor_page->FitInside();
 
 	return editor_page;
 }
 
 wxNotebookPage* PreferencesWindow::CreateGraphicsPage() {
 	wxWindow* tmp;
-	wxNotebookPage* graphics_page = newd wxPanel(book, wxID_ANY);
+	wxScrolledWindow* graphics_page = newd wxScrolledWindow(book, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxVSCROLL);
+	graphics_page->SetScrollRate(10, 10);
 
 	wxSizer* sizer = newd wxBoxSizer(wxVERTICAL);
 
@@ -304,6 +315,13 @@ wxNotebookPage* PreferencesWindow::CreateGraphicsPage() {
 	use_memcached_chkbox->SetValue(g_settings.getBoolean(Config::USE_MEMCACHED_SPRITES_TO_SAVE));
 	use_memcached_chkbox->SetToolTip("Uncheck this to conserve memory.");
 	sizer->Add(use_memcached_chkbox, 0, wxLEFT | wxTOP, 5);
+
+	sprite_transparency_chkbox = newd wxCheckBox(graphics_page, wxID_ANY, "Load SPR with transparency");
+	sprite_transparency_chkbox->SetValue(g_settings.getBoolean(Config::SPRITE_TRANSPARENCY));
+	sprite_transparency_chkbox->SetToolTip("Decode sprites using 4-channel alpha (RGBA), compatible with DAT/SPR .\n"
+		"When enabled, semi-transparent pixels are blended on the map. Technical/invisible item overlays use their configured opacity on top.\n"
+		"Also respected when a client .otfi file sets transparency.");
+	sizer->Add(sprite_transparency_chkbox, 0, wxLEFT | wxTOP, 5);
 
 	dark_mode_chkbox = newd wxCheckBox(graphics_page, wxID_ANY, "Use dark mode");
 	dark_mode_chkbox->SetValue(g_settings.getBoolean(Config::DARK_MODE));
@@ -517,7 +535,8 @@ wxNotebookPage* PreferencesWindow::CreateGraphicsPage() {
 	// Initial update of UI state
 	UpdateClientBoxUI();
 
-	graphics_page->SetSizerAndFit(sizer);
+	graphics_page->SetSizer(sizer);
+	graphics_page->FitInside();
 
 	return graphics_page;
 }
@@ -567,7 +586,8 @@ void PreferencesWindow::SetPaletteStyleChoice(wxChoice* ctrl, int key) {
 }
 
 wxNotebookPage* PreferencesWindow::CreateUIPage() {
-	wxNotebookPage* ui_page = newd wxPanel(book, wxID_ANY);
+	wxScrolledWindow* ui_page = newd wxScrolledWindow(book, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxVSCROLL);
+	ui_page->SetScrollRate(10, 10);
 
 	wxSizer* sizer = newd wxBoxSizer(wxVERTICAL);
 
@@ -673,13 +693,15 @@ wxNotebookPage* PreferencesWindow::CreateUIPage() {
 	zoom_speed_slider->SetToolTip("This controls how fast you will zoom when you scroll the center mouse button.");
 	sizer->Add(zoom_speed_slider, 0, wxEXPAND, 5);
 
-	ui_page->SetSizerAndFit(sizer);
+	ui_page->SetSizer(sizer);
+	ui_page->FitInside();
 
 	return ui_page;
 }
 
 wxNotebookPage* PreferencesWindow::CreateClientPage() {
-	wxNotebookPage* client_page = newd wxPanel(book, wxID_ANY);
+	wxScrolledWindow* client_page = newd wxScrolledWindow(book, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxVSCROLL);
+	client_page->SetScrollRate(10, 10);
 
 	// Refresh g_settings
 	ClientVersion::saveVersions();
@@ -714,7 +736,7 @@ wxNotebookPage* PreferencesWindow::CreateClientPage() {
 	topsizer->AddSpacer(10);
 
 	wxScrolledWindow* client_list_window = newd wxScrolledWindow(client_page, wxID_ANY, wxDefaultPosition, wxDefaultSize);
-	client_list_window->SetMinSize(FROM_DIP(this, wxSize(450, 450)));
+	client_list_window->SetMinSize(FROM_DIP(this, wxSize(380, 200)));
 	auto* client_list_sizer = newd wxFlexGridSizer(2, 10, 10);
 	client_list_sizer->AddGrowableCol(1);
 
@@ -749,14 +771,16 @@ wxNotebookPage* PreferencesWindow::CreateClientPage() {
 	client_list_window->SetSizer(client_list_sizer);
 	client_list_window->FitInside();
 	client_list_window->SetScrollRate(5, 5);
-	topsizer->Add(client_list_window, 0, wxALL, 5);
-	client_page->SetSizerAndFit(topsizer);
+	topsizer->Add(client_list_window, 1, wxEXPAND | wxALL, 5);
+	client_page->SetSizer(topsizer);
+	client_page->FitInside();
 
 	return client_page;
 }
 
 wxNotebookPage* PreferencesWindow::CreateLODPage() {
-	wxNotebookPage* lod_page = newd wxPanel(book, wxID_ANY);
+	wxScrolledWindow* lod_page = newd wxScrolledWindow(book, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxVSCROLL);
+	lod_page->SetScrollRate(10, 10);
 	wxSizer* sizer = newd wxBoxSizer(wxVERTICAL);
 	wxStaticText* tmptext;
 
@@ -866,12 +890,14 @@ wxNotebookPage* PreferencesWindow::CreateLODPage() {
 
 	sizer->Add(newd wxStaticText(lod_page, wxID_ANY, "Higher values = better performance, less detail."), 0, wxLEFT | wxBOTTOM, 5);
 
-	lod_page->SetSizerAndFit(sizer);
+	lod_page->SetSizer(sizer);
+	lod_page->FitInside();
 	return lod_page;
 }
 
 wxNotebookPage* PreferencesWindow::CreateAutomagicPage() {
-	wxNotebookPage* automagic_page = newd wxPanel(book, wxID_ANY);
+	wxScrolledWindow* automagic_page = newd wxScrolledWindow(book, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxVSCROLL);
+	automagic_page->SetScrollRate(10, 10);
 	wxSizer* sizer = newd wxBoxSizer(wxVERTICAL);
 
 	// Create main checkbox for enabling/disabling automagic
@@ -1003,12 +1029,14 @@ wxNotebookPage* PreferencesWindow::CreateAutomagicPage() {
 	custom_border_id_spin->Enable(enabled && custom_border_checkbox->GetValue());
 	custom_border_id_label->Enable(enabled && custom_border_checkbox->GetValue());
 	
-	automagic_page->SetSizerAndFit(sizer);
+	automagic_page->SetSizer(sizer);
+	automagic_page->FitInside();
 	return automagic_page;
 }
 
 wxNotebookPage* PreferencesWindow::CreateTooltipInfoPage() {
-	wxNotebookPage* tooltip_page = newd wxPanel(book, wxID_ANY);
+	wxScrolledWindow* tooltip_page = newd wxScrolledWindow(book, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxVSCROLL);
+	tooltip_page->SetScrollRate(10, 10);
 	wxSizer* sizer = newd wxBoxSizer(wxVERTICAL);
 
 	// Master enable checkbox
@@ -1070,6 +1098,12 @@ wxNotebookPage* PreferencesWindow::CreateTooltipInfoPage() {
 	tooltip_show_houseid_chkbox->SetValue(g_settings.getBoolean(Config::TOOLTIP_SHOW_HOUSEID));
 	tooltip_show_houseid_chkbox->SetToolTip("Show the house ID on house tiles.");
 	sizer->Add(tooltip_show_houseid_chkbox, 0, wxALL, 5);
+
+	// Show container contents checkbox
+	tooltip_show_container_contains_chkbox = newd wxCheckBox(tooltip_page, wxID_ANY, "Show container contents in tooltips");
+	tooltip_show_container_contains_chkbox->SetValue(g_settings.getBoolean(Config::TOOLTIP_SHOW_CONTAINER_CONTAINS));
+	tooltip_show_container_contains_chkbox->SetToolTip("Show item sprites from containers that hold items. When multiple containers share a tile, use the arrow to cycle through them.");
+	sizer->Add(tooltip_show_container_contains_chkbox, 0, wxALL, 5);
 	
 	// Custom house colors
 	house_custom_colors_chkbox = newd wxCheckBox(tooltip_page, wxID_ANY, "Use custom house colors");
@@ -1077,19 +1111,28 @@ wxNotebookPage* PreferencesWindow::CreateTooltipInfoPage() {
 	house_custom_colors_chkbox->SetToolTip("Color house tiles differently based on their house ID. Works with all items on house tiles.");
 	sizer->Add(house_custom_colors_chkbox, 0, wxALL, 5);
 
-	tooltip_page->SetSizerAndFit(sizer);
+	tooltip_page->SetSizer(sizer);
+	tooltip_page->FitInside();
 	return tooltip_page;
 }
 
 // Event handlers!
 
+void PreferencesWindow::SelectClientVersionPage() {
+	book->SetSelection(4);
+}
+
+void PreferencesWindow::OnClose(wxCloseEvent& WXUNUSED(event)) {
+	Destroy();
+}
+
 void PreferencesWindow::OnClickOK(wxCommandEvent& WXUNUSED(event)) {
 	Apply();
-	EndModal(0);
+	Close();
 }
 
 void PreferencesWindow::OnClickCancel(wxCommandEvent& WXUNUSED(event)) {
-	EndModal(0);
+	Close();
 }
 
 void PreferencesWindow::OnClickApply(wxCommandEvent& WXUNUSED(event)) {
@@ -1183,11 +1226,16 @@ void PreferencesWindow::Apply() {
 
 
 	// Graphics
+	const bool old_sprite_transparency = g_settings.getBoolean(Config::SPRITE_TRANSPARENCY);
 	g_settings.setInteger(Config::USE_GUI_SELECTION_SHADOW, icon_selection_shadow_chkbox->GetValue());
 	if (g_settings.getBoolean(Config::USE_MEMCACHED_SPRITES) != use_memcached_chkbox->GetValue()) {
 		must_restart = true;
 	}
 	g_settings.setInteger(Config::USE_MEMCACHED_SPRITES_TO_SAVE, use_memcached_chkbox->GetValue());
+	if (old_sprite_transparency != sprite_transparency_chkbox->GetValue()) {
+		g_gui.gfx.invalidateAllSpriteTextures();
+	}
+	g_settings.setInteger(Config::SPRITE_TRANSPARENCY, sprite_transparency_chkbox->GetValue());
 	if (icon_background_choice->GetSelection() == 0) {
 		if (g_settings.getInteger(Config::ICON_BACKGROUND) != 0) {
 			g_gui.gfx.cleanSoftwareSprites();
@@ -1359,6 +1407,7 @@ void PreferencesWindow::Apply() {
 	g_settings.setInteger(Config::TOOLTIP_SHOW_DOORID, tooltip_show_doorid_chkbox->GetValue());
 	g_settings.setInteger(Config::TOOLTIP_SHOW_DESTINATION, tooltip_show_destination_chkbox->GetValue());
 	g_settings.setInteger(Config::TOOLTIP_SHOW_HOUSEID, tooltip_show_houseid_chkbox->GetValue());
+	g_settings.setInteger(Config::TOOLTIP_SHOW_CONTAINER_CONTAINS, tooltip_show_container_contains_chkbox->GetValue());
 	g_settings.setInteger(Config::HOUSE_CUSTOM_COLORS, house_custom_colors_chkbox->GetValue());
 
 	if (g_gui.root && g_gui.root->GetAuiToolBar()) {
@@ -1410,7 +1459,8 @@ void PreferencesWindow::UpdateDarkModeUI() {
 }
 
 wxNotebookPage* PreferencesWindow::CreateInvisibleItemsPage() {
-	wxNotebookPage* invisible_page = newd wxPanel(book, wxID_ANY);
+	wxScrolledWindow* invisible_page = newd wxScrolledWindow(book, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxVSCROLL);
+	invisible_page->SetScrollRate(10, 10);
 	
 	wxSizer* sizer = newd wxBoxSizer(wxVERTICAL);
 
@@ -1504,7 +1554,8 @@ wxNotebookPage* PreferencesWindow::CreateInvisibleItemsPage() {
 	// Initial update of UI state
 	UpdateInvisibleItemsUI();
 
-	invisible_page->SetSizerAndFit(sizer);
+	invisible_page->SetSizer(sizer);
+	invisible_page->FitInside();
 	return invisible_page;
 }
 

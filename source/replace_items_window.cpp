@@ -26,8 +26,10 @@
 #include "ground_brush.h"
 #include "wall_brush.h"
 #include "doodad_brush.h"
+#include "string_utils.h"
 #include <wx/dir.h>
 #include <wx/tokenzr.h>
+#include <algorithm>
 
 /*
 Current Task:
@@ -183,193 +185,172 @@ wxCoord ReplaceItemsListBox::OnMeasureItem(size_t WXUNUSED(index)) const {
 }
 
 void ReplaceItemsListBox::Clear() {
-	m_items.clear();  // Clear the vector
-	SetItemCount(0);  // Reset the list count
-	Refresh();        // Force a visual refresh
-	Update();         // Force immediate update
+	m_items.clear();
+	SetItemCount(0);
+	Refresh();
+	Update();
+}
+
+void ReplaceItemsListBox::SetItems(const std::vector<ReplacingItem>& items) {
+	m_items = items;
+	SetItemCount(m_items.size());
+	Refresh();
 }
 
 // ============================================================================
 // ReplaceItemsDialog
 
 ReplaceItemsDialog::ReplaceItemsDialog(wxWindow* parent, bool selectionOnly) :
-	wxDialog(parent, wxID_ANY, (selectionOnly ? "Replace Items on Selection" : "Replace Items"), 
-		wxDefaultPosition, wxSize(800, 800), wxDEFAULT_DIALOG_STYLE),
-	selectionOnly(selectionOnly) {
-	SetSizeHints(wxDefaultSize, wxDefaultSize);
+	wxDialog(parent, wxID_ANY, (selectionOnly ? "Replace Items on Selection" : "Replace Items"),
+		wxDefaultPosition, wxSize(900, 560), wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER),
+	selectionOnly(selectionOnly),
+	preview_source_(PreviewSource::Manual) {
+	const int pad = 6;
 
-	// Create a scrolled window to hold all controls
-	wxScrolledWindow* scrolled = new wxScrolledWindow(this, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxVSCROLL | wxHSCROLL);
-	scrolled->SetScrollRate(5, 5);
-
-	// Main sizer for the scrolled window
+	wxBoxSizer* root_sizer = new wxBoxSizer(wxHORIZONTAL);
 	wxBoxSizer* main_sizer = new wxBoxSizer(wxVERTICAL);
 
-	// List sizer
-	wxFlexGridSizer* list_sizer = new wxFlexGridSizer(0, 2, 0, 0);
-	list_sizer->SetFlexibleDirection(wxBOTH);
-	list_sizer->SetNonFlexibleGrowMode(wxFLEX_GROWMODE_SPECIFIED);
-	list_sizer->SetMinSize(wxSize(25, 300));
+	// Replacement list
+	list = new ReplaceItemsListBox(this);
+	list->SetMinSize(wxSize(-1, 140));
+	main_sizer->Add(list, 1, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, pad);
 
-	list = new ReplaceItemsListBox(scrolled);
-	list->SetMinSize(wxSize(480, 320));
+	progress = new wxGauge(this, wxID_ANY, 100, wxDefaultPosition, wxSize(-1, 18));
+	main_sizer->Add(progress, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, pad);
 
-	list_sizer->Add(list, 0, wxALL | wxEXPAND, 5);
-	main_sizer->Add(list_sizer, 1, wxALL | wxEXPAND, 5);
+	// Manual item replace row
+	{
+		wxStaticBoxSizer* items_sizer = new wxStaticBoxSizer(wxVERTICAL, this, "Replace Items");
 
-	// Add progress bar
-	progress = new wxGauge(scrolled, wxID_ANY, 100, wxDefaultPosition, wxSize(-1, 25));
-	main_sizer->Add(progress, 0, wxEXPAND | wxALL, 5);
+		wxBoxSizer* row = new wxBoxSizer(wxHORIZONTAL);
 
-	// Items sizer
-	wxBoxSizer* items_sizer = new wxBoxSizer(wxHORIZONTAL);
-	items_sizer->SetMinSize(wxSize(-1, 30));
+		wxBoxSizer* replace_column = new wxBoxSizer(wxVERTICAL);
+		replace_button = new ReplaceItemsButton(this);
+		replace_column->Add(replace_button, 0, wxALIGN_CENTER_HORIZONTAL);
+		replace_range_input = new wxTextCtrl(this, wxID_ANY, "", wxDefaultPosition, wxSize(120, -1));
+		replace_range_input->SetToolTip("Enter IDs or ranges separated by commas (e.g., 100-105,200)");
+		replace_column->Add(replace_range_input, 0, wxEXPAND | wxTOP, 4);
+		row->Add(replace_column, 0, wxALIGN_CENTER_VERTICAL);
 
-	// First column - Replace button and input with reduced size
-	wxBoxSizer* replace_column = new wxBoxSizer(wxVERTICAL);
-	replace_button = new ReplaceItemsButton(scrolled);
-	replace_column->Add(replace_button, 0, wxALL, 2);
-	
-	replace_range_input = new wxTextCtrl(scrolled, wxID_ANY, "", wxDefaultPosition, wxSize(100, -1));
-	replace_range_input->SetToolTip("Enter range to replace (e.g., 100-105,200)");
-	replace_column->Add(replace_range_input, 0, wxEXPAND | wxALL, 2);
-	
-	items_sizer->Add(replace_column, 0, wxEXPAND);
+		arrow_bitmap = new wxStaticBitmap(this, wxID_ANY, wxArtProvider::GetBitmap(wxART_GO_FORWARD));
+		row->Add(arrow_bitmap, 0, wxALIGN_CENTER_VERTICAL | wxLEFT | wxRIGHT, 8);
 
-	// Arrow bitmap in the middle
-	arrow_bitmap = new wxStaticBitmap(scrolled, wxID_ANY, wxArtProvider::GetBitmap(wxART_GO_FORWARD));
-	items_sizer->Add(arrow_bitmap, 0, wxALIGN_CENTER | wxALL, 2);
+		wxBoxSizer* with_column = new wxBoxSizer(wxVERTICAL);
+		with_button = new ReplaceItemsButton(this);
+		with_column->Add(with_button, 0, wxALIGN_CENTER_HORIZONTAL);
+		with_range_input = new wxTextCtrl(this, wxID_ANY, "", wxDefaultPosition, wxSize(120, -1));
+		with_range_input->SetToolTip("Enter IDs or ranges separated by commas (e.g., 200-205,300)");
+		with_column->Add(with_range_input, 0, wxEXPAND | wxTOP, 4);
+		row->Add(with_column, 0, wxALIGN_CENTER_VERTICAL);
 
-	// Second column - With button and input with reduced size
-	wxBoxSizer* with_column = new wxBoxSizer(wxVERTICAL);
-	with_button = new ReplaceItemsButton(scrolled);
-	with_column->Add(with_button, 0, wxALL, 2);
-	
-	with_range_input = new wxTextCtrl(scrolled, wxID_ANY, "", wxDefaultPosition, wxSize(100, -1));
-	with_range_input->SetToolTip("Enter range to replace with (e.g., 200-205,300)");
-	with_column->Add(with_range_input, 0, wxEXPAND | wxALL, 2);
-	
-	items_sizer->Add(with_column, 0, wxEXPAND);
+		add_button = new wxButton(this, wxID_ANY, "Add");
+		row->Add(add_button, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, 12);
 
-	// Add button at the end
-	add_button = new wxButton(scrolled, wxID_ANY, "Add", wxDefaultPosition, wxSize(60, -1));
-	items_sizer->Add(add_button, 0, wxALIGN_CENTER | wxALL, 2);
+		items_sizer->Add(row, 0, wxEXPAND | wxALL, pad);
+		main_sizer->Add(items_sizer, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, pad);
+	}
 
-	main_sizer->Add(items_sizer, 0, wxALL | wxEXPAND, 5);
+	// Border replace
+	{
+		wxStaticBoxSizer* border_sizer = new wxStaticBoxSizer(wxVERTICAL, this, "Replace Borders");
 
-	// Add border controls
-	wxBoxSizer* border_sizer = new wxBoxSizer(wxVERTICAL);
-	
-	wxStaticText* border_label = new wxStaticText(scrolled, wxID_ANY, "Replace Borders:");
-	border_sizer->Add(border_label, 0, wxALL | wxALIGN_LEFT, 5);
-	
-	wxBoxSizer* border_selection_sizer = new wxBoxSizer(wxHORIZONTAL);
-	
-	border_from_choice = new wxChoice(scrolled, wxID_ANY, wxDefaultPosition, wxSize(200, 30));
-	border_to_choice = new wxChoice(scrolled, wxID_ANY, wxDefaultPosition, wxSize(200, 30));
-	
-	border_selection_sizer->Add(border_from_choice, 0, wxALL | wxALIGN_CENTER_VERTICAL, 5);
-	border_selection_sizer->Add(border_to_choice, 0, wxALL | wxALIGN_CENTER_VERTICAL, 5);
-	
-	border_sizer->Add(border_selection_sizer, 0, wxALL | wxCENTER, 5);
-	
-	add_border_button = new wxButton(scrolled, wxID_ANY, "Add Border Items", wxDefaultPosition, wxSize(150, 30));
-	border_sizer->Add(add_border_button, 0, wxALL | wxCENTER, 5);
-	
-	main_sizer->Add(border_sizer, 0, wxALL | wxCENTER, 5);
+		wxBoxSizer* border_selection_sizer = new wxBoxSizer(wxHORIZONTAL);
+		border_from_choice = new wxChoice(this, wxID_ANY, wxDefaultPosition, wxDefaultSize);
+		border_to_choice = new wxChoice(this, wxID_ANY, wxDefaultPosition, wxDefaultSize);
+		border_from_choice->SetMinSize(wxSize(180, -1));
+		border_to_choice->SetMinSize(wxSize(180, -1));
+		border_selection_sizer->Add(border_from_choice, 1, wxEXPAND | wxRIGHT, pad);
+		border_selection_sizer->Add(border_to_choice, 1, wxEXPAND);
+		border_sizer->Add(border_selection_sizer, 0, wxEXPAND | wxALL, pad);
 
-	// Add wall selection controls
-	wxBoxSizer* wall_sizer = new wxBoxSizer(wxVERTICAL);
+		add_border_button = new wxButton(this, wxID_ANY, "Add Border Items");
+		border_sizer->Add(add_border_button, 0, wxALIGN_LEFT | wxLEFT | wxRIGHT | wxBOTTOM, pad);
 
-	wxStaticText* wall_label = new wxStaticText(scrolled, wxID_ANY, "Replace Walls:");
-	wall_sizer->Add(wall_label, 0, wxALL | wxALIGN_LEFT, 5);
+		main_sizer->Add(border_sizer, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, pad);
+	}
 
-	wxBoxSizer* wall_selection_sizer = new wxBoxSizer(wxHORIZONTAL);
+	// Wall replace
+	{
+		wxStaticBoxSizer* wall_sizer = new wxStaticBoxSizer(wxVERTICAL, this, "Replace Walls");
 
-	wall_from_choice = new wxChoice(scrolled, wxID_ANY, wxDefaultPosition, wxSize(200, 30));
-	wall_to_choice = new wxChoice(scrolled, wxID_ANY, wxDefaultPosition, wxSize(200, 30));
-	wall_orientation_choice = new wxChoice(scrolled, wxID_ANY, wxDefaultPosition, wxSize(100, 30));
+		wxBoxSizer* wall_selection_sizer = new wxBoxSizer(wxHORIZONTAL);
+		wall_from_choice = new wxChoice(this, wxID_ANY, wxDefaultPosition, wxDefaultSize);
+		wall_to_choice = new wxChoice(this, wxID_ANY, wxDefaultPosition, wxDefaultSize);
+		wall_orientation_choice = new wxChoice(this, wxID_ANY, wxDefaultPosition, wxSize(90, -1));
+		wall_from_choice->SetMinSize(wxSize(150, -1));
+		wall_to_choice->SetMinSize(wxSize(150, -1));
 
-	wall_orientation_choice->Append("All");
-	wall_orientation_choice->Append("Horizontal");
-	wall_orientation_choice->Append("Vertical");
-	wall_orientation_choice->Append("Corner");
-	wall_orientation_choice->Append("Pole");
-	wall_orientation_choice->SetSelection(0);
+		wall_orientation_choice->Append("All");
+		wall_orientation_choice->Append("Horizontal");
+		wall_orientation_choice->Append("Vertical");
+		wall_orientation_choice->Append("Corner");
+		wall_orientation_choice->Append("Pole");
+		wall_orientation_choice->SetSelection(0);
 
-	wall_selection_sizer->Add(wall_from_choice, 0, wxALL | wxALIGN_CENTER_VERTICAL, 5);
-	wall_selection_sizer->Add(wall_to_choice, 0, wxALL | wxALIGN_CENTER_VERTICAL, 5);
-	wall_selection_sizer->Add(wall_orientation_choice, 0, wxALL | wxALIGN_CENTER_VERTICAL, 5);
+		wall_selection_sizer->Add(wall_from_choice, 1, wxEXPAND | wxRIGHT, pad);
+		wall_selection_sizer->Add(wall_to_choice, 1, wxEXPAND | wxRIGHT, pad);
+		wall_selection_sizer->Add(wall_orientation_choice, 0, wxEXPAND);
+		wall_sizer->Add(wall_selection_sizer, 0, wxEXPAND | wxALL, pad);
 
-	wall_sizer->Add(wall_selection_sizer, 0, wxALL | wxCENTER, 5);
+		add_wall_button = new wxButton(this, wxID_ANY, "Add Wall Items");
+		wall_sizer->Add(add_wall_button, 0, wxALIGN_LEFT | wxLEFT | wxRIGHT | wxBOTTOM, pad);
 
-	add_wall_button = new wxButton(scrolled, wxID_ANY, "Add Wall Items", wxDefaultPosition, wxSize(150, 30));
-	wall_sizer->Add(add_wall_button, 0, wxALL | wxCENTER, 5);
+		main_sizer->Add(wall_sizer, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, pad);
+	}
 
-	main_sizer->Add(wall_sizer, 0, wxALL | wxCENTER, 5);
+	// Presets
+	{
+		wxStaticBoxSizer* preset_sizer = new wxStaticBoxSizer(wxHORIZONTAL, this, "Presets");
+		preset_choice = new wxChoice(this, wxID_ANY, wxDefaultPosition, wxDefaultSize);
+		preset_choice->SetMinSize(wxSize(140, -1));
+		preset_sizer->Add(preset_choice, 1, wxEXPAND | wxRIGHT, pad);
 
-	// Create main buttons row
-	wxBoxSizer* buttons_sizer = new wxBoxSizer(wxHORIZONTAL);
+		load_preset_button = new wxButton(this, wxID_ANY, wxT("Load"));
+		add_preset_button = new wxButton(this, wxID_ANY, wxT("Add Preset"));
+		remove_preset_button = new wxButton(this, wxID_ANY, wxT("Remove Preset"));
+		preset_sizer->Add(load_preset_button, 0, wxRIGHT, pad);
+		preset_sizer->Add(add_preset_button, 0, wxRIGHT, pad);
+		preset_sizer->Add(remove_preset_button, 0);
 
-	wxBoxSizer* left_buttons = new wxBoxSizer(wxHORIZONTAL);
-	add_button->Connect(wxEVT_BUTTON, wxCommandEventHandler(ReplaceItemsDialog::OnAddButtonClicked), NULL, this);
-	add_button->SetMinSize(wxSize(80, 30));
-	left_buttons->Add(add_button, 0, wxRIGHT, 5);
+		main_sizer->Add(preset_sizer, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, pad);
+	}
 
-	remove_button = new wxButton(scrolled, wxID_ANY, wxT("Remove"));
-	remove_button->Enable(false);
-	remove_button->SetMinSize(wxSize(80, 30));
-	left_buttons->Add(remove_button, 0, wxRIGHT, 5);
+	// Bottom action bar
+	{
+		wxBoxSizer* buttons_sizer = new wxBoxSizer(wxHORIZONTAL);
 
-	buttons_sizer->Add(left_buttons, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, 5);
+		remove_button = new wxButton(this, wxID_ANY, wxT("Remove"));
+		remove_button->Enable(false);
+		execute_button = new wxButton(this, wxID_ANY, wxT("Execute"));
+		execute_button->Enable(false);
+		buttons_sizer->Add(remove_button, 0, wxRIGHT, pad);
+		buttons_sizer->Add(execute_button, 0);
 
-	wxBoxSizer* right_buttons = new wxBoxSizer(wxHORIZONTAL);
-	execute_button = new wxButton(scrolled, wxID_ANY, wxT("Execute"));
-	execute_button->Enable(false);
-	execute_button->SetMinSize(wxSize(100, 30));
-	right_buttons->Add(execute_button, 0, wxRIGHT, 5);
+		buttons_sizer->AddStretchSpacer();
 
-	close_button = new wxButton(scrolled, wxID_ANY, wxT("Close"));
-	close_button->SetMinSize(wxSize(80, 30));
-	right_buttons->Add(close_button, 0, wxRIGHT, 5);
+		swap_checkbox = new wxCheckBox(this, wxID_ANY, "Swap Items");
+		swap_checkbox->SetToolTip("When checked, items will be swapped instead of just replaced");
+		buttons_sizer->Add(swap_checkbox, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, pad);
 
-	swap_checkbox = new wxCheckBox(scrolled, wxID_ANY, "Swap Items");
-	swap_checkbox->SetMinSize(wxSize(120, 35));
-	swap_checkbox->SetToolTip("When checked, items will be swapped instead of just replaced");
-	right_buttons->Add(swap_checkbox, 0, wxLEFT | wxALIGN_CENTER_VERTICAL, 10);
+		close_button = new wxButton(this, wxID_ANY, wxT("Close"));
+		buttons_sizer->Add(close_button, 0);
 
-	buttons_sizer->Add(right_buttons, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 5);
+		main_sizer->Add(buttons_sizer, 0, wxEXPAND | wxALL, pad);
+	}
 
-	main_sizer->Add(buttons_sizer, 1, wxALL | wxLEFT | wxRIGHT | wxSHAPED, 5);
+	root_sizer->Add(main_sizer, 1, wxEXPAND | wxALL, pad);
 
-	main_sizer->AddSpacer(10);
+	{
+		wxStaticBoxSizer* preview_sizer = new wxStaticBoxSizer(wxVERTICAL, this, "Preview");
+		preview_list = new ReplaceItemsListBox(this);
+		preview_list->SetMinSize(wxSize(300, 200));
+		preview_sizer->Add(preview_list, 1, wxEXPAND | wxALL, pad);
+		root_sizer->Add(preview_sizer, 1, wxEXPAND | wxTOP | wxBOTTOM | wxRIGHT, pad);
+	}
 
-	// Create preset controls row
-	wxBoxSizer* preset_sizer = new wxBoxSizer(wxHORIZONTAL);
-	
-	preset_choice = new wxChoice(scrolled, wxID_ANY, wxDefaultPosition, wxSize(150, 30));
-	preset_sizer->Add(preset_choice, 0, wxALL | wxALIGN_CENTER_VERTICAL, 5);
-	
-	load_preset_button = new wxButton(scrolled, wxID_ANY, wxT("Load"), wxDefaultPosition, wxSize(60, 30));
-	preset_sizer->Add(load_preset_button, 0, wxALL | wxALIGN_CENTER_VERTICAL, 5);
-	
-	add_preset_button = new wxButton(scrolled, wxID_ANY, wxT("Add Preset"), wxDefaultPosition, wxSize(100, 30));
-	preset_sizer->Add(add_preset_button, 0, wxALL | wxALIGN_CENTER_VERTICAL, 5);
-	
-	remove_preset_button = new wxButton(scrolled, wxID_ANY, wxT("Remove Preset"), wxDefaultPosition, wxSize(100, 30));
-	preset_sizer->Add(remove_preset_button, 0, wxALL | wxALIGN_CENTER_VERTICAL, 5);
-	
-	main_sizer->Add(preset_sizer, 0, wxALL | wxCENTER, 5);
-
-	// Set the sizer for the scrolled window
-	scrolled->SetSizer(main_sizer);
-
-	// Create a sizer for the dialog to hold the scrolled window
-	wxBoxSizer* dialog_sizer = new wxBoxSizer(wxVERTICAL);
-	dialog_sizer->Add(scrolled, 1, wxEXPAND | wxALL, 5);
-	SetSizer(dialog_sizer);
-
+	SetSizer(root_sizer);
 	Layout();
+	SetMinSize(wxSize(820, 480));
 	Centre(wxBOTH);
 
 	// Connect Events
@@ -389,6 +370,9 @@ ReplaceItemsDialog::ReplaceItemsDialog(wxWindow* parent, bool selectionOnly) :
 	border_to_choice->Connect(wxEVT_CHOICE, wxCommandEventHandler(ReplaceItemsDialog::OnBorderToSelect), NULL, this);
 	add_border_button->Connect(wxEVT_BUTTON, wxCommandEventHandler(ReplaceItemsDialog::OnAddBorderItems), NULL, this);
 	add_wall_button->Connect(wxEVT_BUTTON, wxCommandEventHandler(ReplaceItemsDialog::OnAddWallItems), NULL, this);
+	wall_from_choice->Connect(wxEVT_CHOICE, wxCommandEventHandler(ReplaceItemsDialog::OnWallFromSelect), NULL, this);
+	wall_to_choice->Connect(wxEVT_CHOICE, wxCommandEventHandler(ReplaceItemsDialog::OnWallToSelect), NULL, this);
+	wall_orientation_choice->Connect(wxEVT_CHOICE, wxCommandEventHandler(ReplaceItemsDialog::OnWallOrientationSelect), NULL, this);
 	replace_range_input->Bind(wxEVT_TEXT, &ReplaceItemsDialog::OnIdInput, this);
 	with_range_input->Bind(wxEVT_TEXT, &ReplaceItemsDialog::OnIdInput, this);
 
@@ -396,6 +380,10 @@ ReplaceItemsDialog::ReplaceItemsDialog(wxWindow* parent, bool selectionOnly) :
 	RefreshPresetList();
 	LoadBorderChoices();
 	LoadWallChoices();
+	add_border_button->Enable(false);
+	add_wall_button->Enable(false);
+	UpdatePreviewList();
+	UpdateWidgets();
 }
 
 ReplaceItemsDialog::~ReplaceItemsDialog() {
@@ -416,13 +404,285 @@ ReplaceItemsDialog::~ReplaceItemsDialog() {
 	border_to_choice->Disconnect(wxEVT_CHOICE, wxCommandEventHandler(ReplaceItemsDialog::OnBorderToSelect), NULL, this);
 	add_border_button->Disconnect(wxEVT_BUTTON, wxCommandEventHandler(ReplaceItemsDialog::OnAddBorderItems), NULL, this);
 	add_wall_button->Disconnect(wxEVT_BUTTON, wxCommandEventHandler(ReplaceItemsDialog::OnAddWallItems), NULL, this);
+	wall_from_choice->Disconnect(wxEVT_CHOICE, wxCommandEventHandler(ReplaceItemsDialog::OnWallFromSelect), NULL, this);
+	wall_to_choice->Disconnect(wxEVT_CHOICE, wxCommandEventHandler(ReplaceItemsDialog::OnWallToSelect), NULL, this);
+	wall_orientation_choice->Disconnect(wxEVT_CHOICE, wxCommandEventHandler(ReplaceItemsDialog::OnWallOrientationSelect), NULL, this);
+}
+
+void ReplaceItemsDialog::SetPreviewSource(PreviewSource source) {
+	preview_source_ = source;
+	UpdatePreviewList();
+}
+
+void ReplaceItemsDialog::UpdatePreviewList() {
+	std::vector<ReplacingItem> items;
+	switch (preview_source_) {
+		case PreviewSource::Border:
+			items = BuildBorderPreviewItems();
+			break;
+		case PreviewSource::Wall:
+			items = BuildWallPreviewItems();
+			break;
+		case PreviewSource::Manual:
+		default:
+			items = BuildManualPreviewItems();
+			break;
+	}
+
+	preview_list->SetItems(items);
+
+	if (!items.empty()) {
+		replace_button->SetItemId(items.front().replaceId);
+		with_button->SetItemId(items.front().withId);
+	} else if (preview_source_ != PreviewSource::Manual) {
+		replace_button->SetItemId(0);
+		with_button->SetItemId(0);
+	}
+
+	add_border_button->Enable(preview_source_ == PreviewSource::Border && !items.empty());
+	add_wall_button->Enable(preview_source_ == PreviewSource::Wall && !items.empty());
+	UpdateAddButtonState();
+}
+
+void ReplaceItemsDialog::AddPreviewItemsToList() {
+	for (const ReplacingItem& item : preview_list->GetItems()) {
+		if (list->CanAdd(item.replaceId, item.withId)) {
+			ReplacingItem copy = item;
+			copy.complete = false;
+			copy.total = 0;
+			list->AddItem(copy);
+		}
+	}
+	UpdateWidgets();
+	list->Refresh();
+}
+
+std::vector<ReplacingItem> ReplaceItemsDialog::BuildBorderPreviewItems() const {
+	std::vector<ReplacingItem> items;
+	const int fromIdx = border_from_choice->GetSelection();
+	const int toIdx = border_to_choice->GetSelection();
+	if (fromIdx <= 0 || toIdx <= 0) {
+		return items;
+	}
+
+	const int fromXmlIdx = GetBorderXmlIndex(fromIdx);
+	const int toXmlIdx = GetBorderXmlIndex(toIdx);
+	if (fromXmlIdx < 0 || toXmlIdx < 0) {
+		return items;
+	}
+
+	wxString dataDir = GetDataDirectoryForVersion(g_gui.GetCurrentVersion().getName());
+	if (dataDir.IsEmpty()) {
+		return items;
+	}
+
+	wxString bordersPath = g_gui.GetDataDirectory() + "/" + dataDir + "/borders.xml";
+	pugi::xml_document doc;
+	if (!doc.load_file(bordersPath.mb_str())) {
+		return items;
+	}
+
+	std::map<std::string, uint16_t> fromItems;
+	std::map<std::string, uint16_t> toItems;
+
+	int currentBorder = 0;
+	for (pugi::xml_node borderNode = doc.child("materials").child("border"); borderNode; borderNode = borderNode.next_sibling("border")) {
+		if (currentBorder == fromXmlIdx || currentBorder == toXmlIdx) {
+			for (pugi::xml_node itemNode = borderNode.child("borderitem"); itemNode; itemNode = itemNode.next_sibling("borderitem")) {
+				std::string edge = itemNode.attribute("edge").value();
+				uint16_t itemId = itemNode.attribute("item").as_uint();
+
+				if (currentBorder == fromXmlIdx) {
+					fromItems[edge] = itemId;
+				} else {
+					toItems[edge] = itemId;
+				}
+			}
+		}
+		currentBorder++;
+	}
+
+	for (const auto& pair : fromItems) {
+		auto toIt = toItems.find(pair.first);
+		if (toIt != toItems.end() && pair.second != 0 && toIt->second != 0 && pair.second != toIt->second) {
+			ReplacingItem item;
+			item.replaceId = pair.second;
+			item.withId = toIt->second;
+			items.push_back(item);
+		}
+	}
+
+	return items;
+}
+
+std::vector<ReplacingItem> ReplaceItemsDialog::BuildWallPreviewItems() const {
+	std::vector<ReplacingItem> items;
+	const int fromIdx = wall_from_choice->GetSelection();
+	const int toIdx = wall_to_choice->GetSelection();
+	const int fromXmlIdx = GetWallXmlIndex(fromIdx);
+	const int toXmlIdx = GetWallXmlIndex(toIdx);
+	if (fromXmlIdx < 0 || toXmlIdx < 0) {
+		return items;
+	}
+
+	wxString dataDir = GetDataDirectoryForVersion(g_gui.GetCurrentVersion().getName());
+	if (dataDir.IsEmpty()) {
+		return items;
+	}
+
+	wxString wallsPath = g_gui.GetDataDirectory() + "/" + dataDir + "/walls.xml";
+	pugi::xml_document doc;
+	if (!doc.load_file(wallsPath.mb_str())) {
+		return items;
+	}
+
+	const wxString orientation = wall_orientation_choice->GetStringSelection().Lower();
+
+	pugi::xml_node fromBrush, toBrush;
+	int currentWall = 0;
+	for (pugi::xml_node brushNode = doc.child("materials").child("brush");
+		brushNode; brushNode = brushNode.next_sibling("brush")) {
+
+		if (std::string(brushNode.attribute("type").value()) == "wall") {
+			if (currentWall == fromXmlIdx) {
+				fromBrush = brushNode;
+			} else if (currentWall == toXmlIdx) {
+				toBrush = brushNode;
+			}
+
+			if (fromBrush && toBrush) {
+				break;
+			}
+			currentWall++;
+		}
+	}
+
+	if (!fromBrush || !toBrush) {
+		return items;
+	}
+
+	auto addPair = [&items](uint16_t fromId, uint16_t toId) {
+		if (fromId != 0 && toId != 0 && fromId != toId) {
+			ReplacingItem item;
+			item.replaceId = fromId;
+			item.withId = toId;
+			items.push_back(item);
+		}
+	};
+
+	for (pugi::xml_node fromWallNode = fromBrush.child("wall");
+		fromWallNode; fromWallNode = fromWallNode.next_sibling("wall")) {
+
+		const std::string wallType = fromWallNode.attribute("type").value();
+		if (orientation != "all" && orientation != wallType) {
+			continue;
+		}
+
+		pugi::xml_node toWallNode = toBrush.find_child_by_attribute("wall", "type", wallType.c_str());
+		if (!toWallNode) {
+			continue;
+		}
+
+		for (pugi::xml_node fromItem = fromWallNode.child("item");
+			fromItem; fromItem = fromItem.next_sibling("item")) {
+
+			const uint16_t fromItemId = fromItem.attribute("id").as_uint();
+			std::vector<pugi::xml_node> availableItems;
+			for (pugi::xml_node toItem = toWallNode.child("item"); toItem; toItem = toItem.next_sibling("item")) {
+				availableItems.push_back(toItem);
+			}
+
+			if (!availableItems.empty()) {
+				int fromPos = 0;
+				for (pugi::xml_node tempItem = fromWallNode.child("item"); tempItem && tempItem != fromItem; tempItem = tempItem.next_sibling("item")) {
+					fromPos++;
+				}
+				const size_t targetPos = std::min(fromPos, static_cast<int>(availableItems.size()) - 1);
+				addPair(fromItemId, availableItems[targetPos].attribute("id").as_uint());
+			}
+		}
+
+		for (pugi::xml_node fromDoor = fromWallNode.child("door");
+			fromDoor; fromDoor = fromDoor.next_sibling("door")) {
+
+			const std::string doorType = fromDoor.attribute("type").value();
+			const bool isOpen = fromDoor.attribute("open").as_bool();
+			const bool isLocked = fromDoor.attribute("locked").as_bool();
+
+			pugi::xml_node toDoor = toWallNode.child("door");
+			pugi::xml_node fallbackDoor;
+			while (toDoor) {
+				if (toDoor.attribute("type").value() == doorType &&
+					toDoor.attribute("open").as_bool() == isOpen &&
+					toDoor.attribute("locked").as_bool() == isLocked) {
+					break;
+				}
+				if (!fallbackDoor) {
+					fallbackDoor = toDoor;
+				}
+				toDoor = toDoor.next_sibling("door");
+			}
+
+			if (!toDoor) {
+				toDoor = fallbackDoor;
+			}
+
+			if (toDoor) {
+				addPair(fromDoor.attribute("id").as_uint(), toDoor.attribute("id").as_uint());
+			}
+		}
+	}
+
+	return items;
+}
+
+std::vector<ReplacingItem> ReplaceItemsDialog::BuildManualPreviewItems() const {
+	std::vector<ReplacingItem> items;
+	const wxString replaceStr = replace_range_input->GetValue().Trim();
+	const wxString withStr = with_range_input->GetValue().Trim();
+	const uint16_t replaceButtonId = replace_button->GetItemId();
+	const uint16_t withButtonId = with_button->GetItemId();
+
+	if (replaceStr.IsEmpty() && withStr.IsEmpty()) {
+		if (replaceButtonId != 0 && withButtonId != 0 && replaceButtonId != withButtonId) {
+			ReplacingItem item;
+			item.replaceId = replaceButtonId;
+			item.withId = withButtonId;
+			items.push_back(item);
+		}
+		return items;
+	}
+
+	std::vector<uint16_t> replaceIds = FlattenRanges(ParseRangeString(replaceStr));
+	if (replaceIds.empty() && replaceButtonId != 0) {
+		replaceIds.push_back(replaceButtonId);
+	}
+
+	std::vector<uint16_t> withIds = FlattenRanges(ParseRangeString(withStr));
+	if (withIds.empty() && withButtonId != 0) {
+		withIds.push_back(withButtonId);
+	}
+
+	if (replaceIds.empty() || withIds.empty()) {
+		return items;
+	}
+
+	for (size_t i = 0; i < replaceIds.size(); ++i) {
+		const uint16_t fromId = replaceIds[i];
+		const uint16_t toId = withIds[std::min(i, withIds.size() - 1)];
+		if (fromId != 0 && toId != 0 && fromId != toId) {
+			ReplacingItem item;
+			item.replaceId = fromId;
+			item.withId = toId;
+			items.push_back(item);
+		}
+	}
+
+	return items;
 }
 
 void ReplaceItemsDialog::UpdateWidgets() {
-	// Always enable add button, we'll handle validation with error messages
-	add_button->Enable(true);
-	
-	// Only these buttons need conditional enabling
+	UpdateAddButtonState();
 	remove_button->Enable(list->GetCount() != 0 && list->GetSelection() != wxNOT_FOUND);
 	execute_button->Enable(list->GetCount() != 0);
 }
@@ -439,6 +699,7 @@ void ReplaceItemsDialog::OnReplaceItemClicked(wxMouseEvent& WXUNUSED(event)) {
 
 	if (id != 0) {
 		replace_button->SetItemId(id);
+		SetPreviewSource(PreviewSource::Manual);
 		UpdateWidgets();
 		OutputDebugStringA(wxString::Format("Final Replace Item ID set: %d\n", id).c_str());
 	} else {
@@ -459,6 +720,7 @@ void ReplaceItemsDialog::OnWithItemClicked(wxMouseEvent& WXUNUSED(event)) {
 
 	if (id != 0) {
 		with_button->SetItemId(id);
+		SetPreviewSource(PreviewSource::Manual);
 		UpdateWidgets();
 		OutputDebugStringA(wxString::Format("Final With Item ID set: %d\n", id).c_str());
 	} else {
@@ -467,75 +729,20 @@ void ReplaceItemsDialog::OnWithItemClicked(wxMouseEvent& WXUNUSED(event)) {
 }
 
 void ReplaceItemsDialog::OnAddButtonClicked(wxCommandEvent& WXUNUSED(event)) {
-	wxString replaceRangeStr = replace_range_input->GetValue().Trim();
-	wxString withRangeStr = with_range_input->GetValue().Trim();
-	
-	// If both inputs are empty, use the button IDs
-	if (replaceRangeStr.IsEmpty() && withRangeStr.IsEmpty()) {
-		const uint16_t replaceId = replace_button->GetItemId();
-		const uint16_t withId = with_button->GetItemId();
-		
-		if (replaceId == 0 || withId == 0) {
-			wxMessageBox("Please select items to replace!", "Error", wxOK | wxICON_ERROR);
-			return;
-		}
-		
-		if (!list->CanAdd(replaceId, withId)) {
-			wxMessageBox("This item is already in the list or cannot be replaced with itself!", "Error", wxOK | wxICON_ERROR);
-			return;
-		}
-		
-		ReplacingItem item;
-		item.replaceId = replaceId;
-		item.withId = withId;
-		list->AddItem(item);
+	SetPreviewSource(PreviewSource::Manual);
+
+	if (preview_list->GetCount() == 0) {
+		wxMessageBox("Please select items to replace!", "Error", wxOK | wxICON_ERROR);
+		return;
 	}
-	// Handle range inputs
-	else {
-		auto replaceRanges = ParseRangeString(replaceRangeStr);
-		auto withRanges = ParseRangeString(withRangeStr);
-		
-		if (replaceRanges.empty()) {
-			wxMessageBox("Please enter valid replace range!", "Error", wxOK | wxICON_ERROR);
-			return;
-		}
-		
-		if (withRanges.empty() && with_button->GetItemId() == 0) {
-			wxMessageBox("Please enter valid with range or select an item!", "Error", wxOK | wxICON_ERROR);
-			return;
-		}
-		
-		// If no with range specified, use the button ID for all replacements
-		uint16_t singleWithId = with_button->GetItemId();
-		bool useSingleWithId = withRanges.empty() && singleWithId != 0;
-		
-		for (const auto& replaceRange : replaceRanges) {
-			for (uint16_t fromId = replaceRange.first; fromId <= replaceRange.second; ++fromId) {
-				uint16_t toId;
-				if (useSingleWithId) {
-					toId = singleWithId;
-				} else {
-					// Calculate corresponding index in withRanges
-					size_t rangeIndex = (fromId - replaceRange.first) % withRanges.size();
-					toId = withRanges[rangeIndex].first + 
-						  (fromId - replaceRange.first) % 
-						  (withRanges[rangeIndex].second - withRanges[rangeIndex].first + 1);
-				}
-				
-				ReplacingItem item;
-				item.replaceId = fromId;
-				item.withId = toId;
-				list->AddItem(item);
-			}
-		}
-	}
-	
-	// Reset controls
+
+	AddPreviewItemsToList();
+
 	replace_button->SetItemId(0);
 	with_button->SetItemId(0);
 	replace_range_input->SetValue("");
 	with_range_input->SetValue("");
-	UpdateWidgets();
+	UpdatePreviewList();
 }
 
 void ReplaceItemsDialog::OnRemoveButtonClicked(wxCommandEvent& WXUNUSED(event)) {
@@ -805,8 +1012,8 @@ uint16_t ReplaceItemsDialog::getActualItemIdFromBrush(const Brush* brush) const 
 void ReplaceItemsDialog::LoadBorderChoices() {
 	border_from_choice->Clear();
 	border_to_choice->Clear();
+	border_xml_indices_.clear();
 	
-	// Load grounds.xml first to get border names
 	wxString dataDir = GetDataDirectoryForVersion(g_gui.GetCurrentVersion().getName());
 	if(dataDir.IsEmpty()) return;
 	
@@ -829,7 +1036,6 @@ void ReplaceItemsDialog::LoadBorderChoices() {
 		}
 	}
 	
-	// Now load borders.xml and use the names we found
 	wxString bordersPath = g_gui.GetDataDirectory() + "/" + dataDir + "/borders.xml";
 	
 	border_from_choice->Append("Select border to replace...");
@@ -837,8 +1043,16 @@ void ReplaceItemsDialog::LoadBorderChoices() {
 	border_from_choice->SetSelection(0);
 	border_to_choice->SetSelection(0);
 	
+	struct BorderEntry {
+		wxString displayText;
+		int itemCount;
+		int xmlIndex;
+	};
+	std::vector<BorderEntry> entries;
+	
 	pugi::xml_document doc;
 	if(doc.load_file(bordersPath.mb_str())) {
+		int xmlIndex = 0;
 		for(pugi::xml_node borderNode = doc.child("materials").child("border"); 
 			borderNode; borderNode = borderNode.next_sibling("border")) {
 			
@@ -851,171 +1065,52 @@ void ReplaceItemsDialog::LoadBorderChoices() {
 				itemCount++;
 			}
 			
-			wxString displayText;
+			BorderEntry entry;
 			if(!name.IsEmpty()) {
-				displayText = wxString::Format("%s [%d] (%d items)", name, borderId, itemCount);
+				entry.displayText = wxString::Format("%s [%d] (%d items)", name, borderId, itemCount);
 			} else {
-				displayText = wxString::Format("Border %d (%d items)", borderId, itemCount);
+				entry.displayText = wxString::Format("Border %d (%d items)", borderId, itemCount);
 			}
-			
-			border_from_choice->Append(displayText);
-			border_to_choice->Append(displayText);
+			entry.itemCount = itemCount;
+			entry.xmlIndex = xmlIndex;
+			entries.push_back(entry);
+			xmlIndex++;
 		}
+	}
+	
+	std::sort(entries.begin(), entries.end(), [](const BorderEntry& a, const BorderEntry& b) {
+		if (a.itemCount != b.itemCount) {
+			return a.itemCount > b.itemCount;
+		}
+		return a.displayText < b.displayText;
+	});
+	
+	for (const BorderEntry& entry : entries) {
+		border_from_choice->Append(entry.displayText);
+		border_to_choice->Append(entry.displayText);
+		border_xml_indices_.push_back(entry.xmlIndex);
 	}
 }
 
 void ReplaceItemsDialog::OnAddBorderItems(wxCommandEvent& WXUNUSED(event)) {
-	int fromIdx = border_from_choice->GetSelection();
-	int toIdx = border_to_choice->GetSelection();
-	
-	OutputDebugStringA(wxString::Format("OnAddBorderItems - From: %d, To: %d\n", fromIdx, toIdx).c_str());
-	
-	if(fromIdx <= 0 || toIdx <= 0) { // Account for the "Select border..." entry
+	if (preview_source_ != PreviewSource::Border || preview_list->GetCount() == 0) {
 		wxMessageBox("Please select both border types!", "Error", wxOK | wxICON_ERROR);
 		return;
 	}
 
-	// Adjust indices to account for the "Select border..." entry
-	fromIdx--;
-	toIdx--;
-
-	// Get border IDs from the actual XML file
-	wxString versionStr(g_gui.GetCurrentVersion().getName());
-	wxString dataDir;
-	
-	// Load clients.xml to get data directory
-	pugi::xml_document clientsDoc;
-	wxString clientsPath = g_gui.GetDataDirectory() + "/clients.xml";
-	pugi::xml_parse_result clientsResult = clientsDoc.load_file(clientsPath.mb_str());
-	
-	if(clientsResult) {
-		for(pugi::xml_node clientNode = clientsDoc.child("client_config").child("clients").child("client"); 
-			clientNode; clientNode = clientNode.next_sibling("client")) {
-			if(versionStr == clientNode.attribute("name").value()) {
-				dataDir = wxString(clientNode.attribute("data_directory").value());
-				break;
-			}
-		}
-	}
-	
-	if(dataDir.IsEmpty()) {
-		OutputDebugStringA("Failed to find data directory in clients.xml\n");
-		return;
-	}
-	
-	wxString bordersPath = g_gui.GetDataDirectory() + "/" + dataDir + "/borders.xml";
-	
-	OutputDebugStringA(wxString::Format("Loading borders from: %s\n", bordersPath).c_str());
-	
-	pugi::xml_document doc;
-	if(doc.load_file(bordersPath.mb_str())) {
-		std::map<std::string, uint16_t> fromItems;
-		std::map<std::string, uint16_t> toItems;
-		
-		int currentBorder = 0;
-		for(pugi::xml_node borderNode = doc.child("materials").child("border"); borderNode; borderNode = borderNode.next_sibling("border")) {
-			if(currentBorder == fromIdx || currentBorder == toIdx) {
-				for(pugi::xml_node itemNode = borderNode.child("borderitem"); itemNode; itemNode = itemNode.next_sibling("borderitem")) {
-					std::string edge = itemNode.attribute("edge").value();
-					uint16_t itemId = itemNode.attribute("item").as_uint();
-					
-					if(currentBorder == fromIdx) {
-						fromItems[edge] = itemId;
-						OutputDebugStringA(wxString::Format("From Border - Edge: %s, Item: %d\n", edge, itemId).c_str());
-					} else {
-						toItems[edge] = itemId;
-						OutputDebugStringA(wxString::Format("To Border - Edge: %s, Item: %d\n", edge, itemId).c_str());
-					}
-				}
-			}
-			currentBorder++;
-		}
-		
-		// Add items to the replace list
-		for(const auto& pair : fromItems) {
-			if(toItems.count(pair.first)) {
-				ReplacingItem item;
-				item.replaceId = pair.second;
-				item.withId = toItems[pair.first];
-				item.complete = false;
-				item.total = 0;
-				
-				OutputDebugStringA(wxString::Format("Adding replacement: %d -> %d\n", item.replaceId, item.withId).c_str());
-				list->AddItem(item);
-			}
-		}
-		
-		UpdateWidgets();
-		list->Refresh();
-	} else {
-		OutputDebugStringA("Failed to load borders.xml\n");
-		wxMessageBox("Failed to load borders configuration!", "Error", wxOK | wxICON_ERROR);
-	}
+	AddPreviewItemsToList();
 }
 
-void ReplaceItemsDialog::OnBorderFromSelect(wxCommandEvent& event) {
-	int idx = event.GetSelection();
-	if(idx > 0) { // Skip "Select border..." entry
-		wxString dataDir = GetDataDirectoryForVersion(g_gui.GetCurrentVersion().getName());
-		if(!dataDir.IsEmpty()) {
-			wxString bordersPath = g_gui.GetDataDirectory() + "/" + dataDir + "/borders.xml";
-			pugi::xml_document doc;
-			if(doc.load_file(bordersPath.mb_str())) {
-				int currentBorder = 0;
-				for(pugi::xml_node borderNode = doc.child("materials").child("border"); 
-					borderNode; borderNode = borderNode.next_sibling("border")) {
-					
-					if(currentBorder == idx - 1) {
-						// Get first borderitem
-						if(pugi::xml_node firstItem = borderNode.child("borderitem")) {
-							uint16_t itemId = firstItem.attribute("item").as_uint();
-							replace_button->SetItemId(itemId);
-							OutputDebugStringA(wxString::Format("Setting replace button item ID to: %d\n", itemId).c_str());
-						}
-						break;
-					}
-					currentBorder++;
-				}
-			}
-		}
-	} else {
-		// Reset if "Select border..." is chosen
-		replace_button->SetItemId(0);
-	}
+void ReplaceItemsDialog::OnBorderFromSelect(wxCommandEvent& WXUNUSED(event)) {
+	SetPreviewSource(PreviewSource::Border);
 }
 
-void ReplaceItemsDialog::OnBorderToSelect(wxCommandEvent& event) {
-	int idx = event.GetSelection();
-	if(idx > 0) {
-		wxString dataDir = GetDataDirectoryForVersion(g_gui.GetCurrentVersion().getName());
-		if(!dataDir.IsEmpty()) {
-			wxString bordersPath = g_gui.GetDataDirectory() + "/" + dataDir + "/borders.xml";
-			pugi::xml_document doc;
-			if(doc.load_file(bordersPath.mb_str())) {
-				int currentBorder = 0;
-				for(pugi::xml_node borderNode = doc.child("materials").child("border"); 
-					borderNode; borderNode = borderNode.next_sibling("border")) {
-					
-					if(currentBorder == idx - 1) {
-						if(pugi::xml_node firstItem = borderNode.child("borderitem")) {
-							uint16_t itemId = firstItem.attribute("item").as_uint();
-							with_button->SetItemId(itemId);
-							OutputDebugStringA(wxString::Format("Setting with button item ID to: %d\n", itemId).c_str());
-						}
-						break;
-					}
-					currentBorder++;
-				}
-			}
-		}
-	} else {
-		// Reset if "Select border..." is chosen
-		with_button->SetItemId(0);
-	}
+void ReplaceItemsDialog::OnBorderToSelect(wxCommandEvent& WXUNUSED(event)) {
+	SetPreviewSource(PreviewSource::Border);
 }
 
 // Helper function to avoid code duplication
-wxString ReplaceItemsDialog::GetDataDirectoryForVersion(const wxString& versionStr) {
+wxString ReplaceItemsDialog::GetDataDirectoryForVersion(const wxString& versionStr) const {
 	pugi::xml_document clientsDoc;
 	wxString clientsPath = g_gui.GetDataDirectory() + "/clients.xml";
 	if(clientsDoc.load_file(clientsPath.mb_str())) {
@@ -1032,6 +1127,7 @@ wxString ReplaceItemsDialog::GetDataDirectoryForVersion(const wxString& versionS
 void ReplaceItemsDialog::LoadWallChoices() {
 	wall_from_choice->Clear();
 	wall_to_choice->Clear();
+	wall_xml_indices_.clear();
 	
 	wall_from_choice->Append("Select wall...");
 	wall_to_choice->Append("Select wall...");
@@ -1039,9 +1135,17 @@ void ReplaceItemsDialog::LoadWallChoices() {
 	wxString dataDir = GetDataDirectoryForVersion(g_gui.GetCurrentVersion().getName());
 	if(dataDir.IsEmpty()) return;
 	
+	struct WallEntry {
+		wxString displayText;
+		int variationCount;
+		int xmlIndex;
+	};
+	std::vector<WallEntry> entries;
+	
 	wxString wallsPath = g_gui.GetDataDirectory() + "/" + dataDir + "/walls.xml";
 	pugi::xml_document doc;
 	if(doc.load_file(wallsPath.mb_str())) {
+		int xmlIndex = 0;
 		for(pugi::xml_node brushNode = doc.child("materials").child("brush"); 
 			brushNode; brushNode = brushNode.next_sibling("brush")) {
 			
@@ -1049,229 +1153,67 @@ void ReplaceItemsDialog::LoadWallChoices() {
 				wxString name = brushNode.attribute("name").value();
 				uint16_t serverId = brushNode.attribute("server_lookid").as_uint();
 				
-				// Count ALL variations including doors and windows
 				int totalVariations = 0;
 				for(pugi::xml_node wallNode = brushNode.child("wall"); 
 					wallNode; wallNode = wallNode.next_sibling("wall")) {
-					// Count items
 					for(pugi::xml_node itemNode = wallNode.child("item"); 
 						itemNode; itemNode = itemNode.next_sibling("item")) {
 						if(itemNode.attribute("chance").as_int() > 0) {
 							totalVariations++;
 						}
 					}
-					// Count doors
 					for(pugi::xml_node doorNode = wallNode.child("door"); 
 						doorNode; doorNode = doorNode.next_sibling("door")) {
 						totalVariations++;
 					}
 				}
 				
-				wxString displayText = wxString::Format("%s [%d] (%d variations)", 
-					name, serverId, totalVariations);
-				
-				wall_from_choice->Append(displayText);
-				wall_to_choice->Append(displayText);
+				WallEntry entry;
+				entry.displayText = wxString::Format("%s [%d] (%d variations)", name, serverId, totalVariations);
+				entry.variationCount = totalVariations;
+				entry.xmlIndex = xmlIndex;
+				entries.push_back(entry);
+				xmlIndex++;
 			}
 		}
 	}
-}
-
-void ReplaceItemsDialog::OnWallFromSelect(wxCommandEvent& event) {
-	int idx = event.GetSelection();
-	if(idx > 0) {
-		wxString dataDir = GetDataDirectoryForVersion(g_gui.GetCurrentVersion().getName());
-		if(!dataDir.IsEmpty()) {
-			wxString wallsPath = g_gui.GetDataDirectory() + "/" + dataDir + "/walls.xml";
-			pugi::xml_document doc;
-			if(doc.load_file(wallsPath.mb_str())) {
-				int currentWall = 0;
-				for(pugi::xml_node brushNode = doc.child("materials").child("brush"); 
-					brushNode; brushNode = brushNode.next_sibling("brush")) {
-					
-					if(std::string(brushNode.attribute("type").value()) == "wall") {
-						if(currentWall == idx - 1) {
-							wxString orientation = wall_orientation_choice->GetStringSelection().Lower();
-							for(pugi::xml_node wallNode = brushNode.child("wall"); 
-								wallNode; wallNode = wallNode.next_sibling("wall")) {
-								
-								if(orientation == "all" || 
-								   orientation == wallNode.attribute("type").value()) {
-									if(pugi::xml_node itemNode = wallNode.child("item")) {
-										uint16_t itemId = itemNode.attribute("id").as_uint();
-										replace_button->SetItemId(itemId);
-										break;
-									}
-								}
-							}
-							break;
-						}
-						currentWall++;
-					}
-				}
-			}
+	
+	std::sort(entries.begin(), entries.end(), [](const WallEntry& a, const WallEntry& b) {
+		if (a.variationCount != b.variationCount) {
+			return a.variationCount > b.variationCount;
 		}
-	} else {
-		replace_button->SetItemId(0);
+		return a.displayText < b.displayText;
+	});
+	
+	for (const WallEntry& entry : entries) {
+		wall_from_choice->Append(entry.displayText);
+		wall_to_choice->Append(entry.displayText);
+		wall_xml_indices_.push_back(entry.xmlIndex);
 	}
 }
 
-void ReplaceItemsDialog::OnWallToSelect(wxCommandEvent& event) {
-	int idx = event.GetSelection();
-	if(idx > 0) {
-		wxString dataDir = GetDataDirectoryForVersion(g_gui.GetCurrentVersion().getName());
-		if(!dataDir.IsEmpty()) {
-			wxString wallsPath = g_gui.GetDataDirectory() + "/" + dataDir + "/walls.xml";
-			pugi::xml_document doc;
-			if(doc.load_file(wallsPath.mb_str())) {
-				int currentWall = 0;
-				for(pugi::xml_node brushNode = doc.child("materials").child("brush"); 
-					brushNode; brushNode = brushNode.next_sibling("brush")) {
-					
-					if(std::string(brushNode.attribute("type").value()) == "wall") {
-						if(currentWall == idx - 1) {
-							wxString orientation = wall_orientation_choice->GetStringSelection().Lower();
-							for(pugi::xml_node wallNode = brushNode.child("wall"); 
-								wallNode; wallNode = wallNode.next_sibling("wall")) {
-								
-								if(orientation == "all" || orientation == wallNode.attribute("type").value()) {
-									if(pugi::xml_node itemNode = wallNode.child("item")) {
-										uint16_t itemId = itemNode.attribute("id").as_uint();
-										with_button->SetItemId(itemId);
-										break;
-									}
-								}
-							}
-							break;
-						}
-						currentWall++;
-					}
-				}
-			}
-		}
-	} else {
-		with_button->SetItemId(0);
+void ReplaceItemsDialog::OnWallFromSelect(wxCommandEvent& WXUNUSED(event)) {
+	SetPreviewSource(PreviewSource::Wall);
+}
+
+void ReplaceItemsDialog::OnWallToSelect(wxCommandEvent& WXUNUSED(event)) {
+	SetPreviewSource(PreviewSource::Wall);
+}
+
+void ReplaceItemsDialog::OnWallOrientationSelect(wxCommandEvent& WXUNUSED(event)) {
+	if (preview_source_ == PreviewSource::Wall ||
+		wall_from_choice->GetSelection() > 0 || wall_to_choice->GetSelection() > 0) {
+		SetPreviewSource(PreviewSource::Wall);
 	}
 }
 
 void ReplaceItemsDialog::OnAddWallItems(wxCommandEvent& WXUNUSED(event)) {
-	int fromIdx = wall_from_choice->GetSelection();
-	int toIdx = wall_to_choice->GetSelection();
-	wxString orientation = wall_orientation_choice->GetStringSelection().Lower();
-	
-	if(fromIdx > 0 && toIdx > 0) {
-		wxString dataDir = GetDataDirectoryForVersion(g_gui.GetCurrentVersion().getName());
-		if(!dataDir.IsEmpty()) {
-			wxString wallsPath = g_gui.GetDataDirectory() + "/" + dataDir + "/walls.xml";
-			pugi::xml_document doc;
-			if(!doc.load_file(wallsPath.mb_str())) return;
-
-			// Find source and target brushes
-			pugi::xml_node fromBrush, toBrush;
-			int currentWall = 0;
-			
-			for(pugi::xml_node brushNode = doc.child("materials").child("brush"); 
-				brushNode; brushNode = brushNode.next_sibling("brush")) {
-				
-				if(std::string(brushNode.attribute("type").value()) == "wall") {
-					if(currentWall == fromIdx - 1) {
-						fromBrush = brushNode;
-					} else if(currentWall == toIdx - 1) {
-						toBrush = brushNode;
-					}
-					
-					if(fromBrush && toBrush) break;
-					currentWall++;
-				}
-			}
-			
-			if(fromBrush && toBrush) {
-				// Process each wall orientation
-				for(pugi::xml_node fromWallNode = fromBrush.child("wall"); 
-					fromWallNode; fromWallNode = fromWallNode.next_sibling("wall")) {
-					
-					std::string wallType = fromWallNode.attribute("type").value();
-					if(orientation == "all" || orientation == wallType) {
-						pugi::xml_node toWallNode = toBrush.find_child_by_attribute("wall", "type", wallType.c_str());
-						
-						if(toWallNode) {
-							// Handle regular wall items
-							for(pugi::xml_node fromItem = fromWallNode.child("item"); 
-								fromItem; fromItem = fromItem.next_sibling("item")) {
-								
-								uint16_t fromItemId = fromItem.attribute("id").as_uint();
-								
-								// Find corresponding item in target wall
-								pugi::xml_node toItem = toWallNode.child("item");
-								std::vector<pugi::xml_node> availableItems;
-								
-								// Collect all available items from target wall
-								while(toItem) {
-									availableItems.push_back(toItem);
-									toItem = toItem.next_sibling("item");
-								}
-								
-								if(!availableItems.empty()) {
-									// If we have the same number of items, match them directly
-									if(availableItems.size() > 1) {
-										// Find the corresponding position in target items
-										int fromPos = 0;
-										pugi::xml_node tempItem = fromWallNode.child("item");
-										while(tempItem && tempItem != fromItem) {
-											fromPos++;
-											tempItem = tempItem.next_sibling("item");
-										}
-										
-										// Use corresponding position if available, otherwise use first item
-										size_t targetPos = std::min(fromPos, (int)availableItems.size() - 1);
-										AddReplacingItem(fromItemId, availableItems[targetPos].attribute("id").as_uint());
-									} else {
-										// If target has fewer items, use the first one for all replacements
-										AddReplacingItem(fromItemId, availableItems[0].attribute("id").as_uint());
-									}
-								}
-							}
-
-							// Handle doors with type matching
-							for(pugi::xml_node fromDoor = fromWallNode.child("door"); 
-								fromDoor; fromDoor = fromDoor.next_sibling("door")) {
-								
-								std::string doorType = fromDoor.attribute("type").value();
-								bool isOpen = fromDoor.attribute("open").as_bool();
-								bool isLocked = fromDoor.attribute("locked").as_bool();
-								
-								// Try to find matching door in target wall
-								pugi::xml_node toDoor = toWallNode.child("door");
-								pugi::xml_node fallbackDoor;
-								
-								while(toDoor) {
-									if(toDoor.attribute("type").value() == doorType &&
-									   toDoor.attribute("open").as_bool() == isOpen &&
-									   toDoor.attribute("locked").as_bool() == isLocked) {
-										break;
-									}
-									// Keep track of first door as fallback
-									if(!fallbackDoor) fallbackDoor = toDoor;
-									toDoor = toDoor.next_sibling("door");
-								}
-								
-								// If no exact match found, use fallback door
-								if(!toDoor) toDoor = fallbackDoor;
-								
-								if(toDoor) {
-									AddReplacingItem(fromDoor.attribute("id").as_uint(), 
-												   toDoor.attribute("id").as_uint());
-								}
-							}
-						}
-					}
-				}
-				
-				UpdateWidgets();
-				list->Refresh();
-			}
-		}
+	if (preview_source_ != PreviewSource::Wall || preview_list->GetCount() == 0) {
+		wxMessageBox("Please select both wall types!", "Error", wxOK | wxICON_ERROR);
+		return;
 	}
+
+	AddPreviewItemsToList();
 }
 
 void ReplaceItemsDialog::AddWallVariations(uint16_t fromId, uint16_t toId) {
@@ -1374,65 +1316,62 @@ void ReplaceItemsDialog::AddReplacingItem(uint16_t fromId, uint16_t toId) {
 }
 
 void ReplaceItemsDialog::OnIdInput(wxCommandEvent& event) {
-    wxTextCtrl* input = dynamic_cast<wxTextCtrl*>(event.GetEventObject());
-    if (!input) return;
+	wxTextCtrl* input = dynamic_cast<wxTextCtrl*>(event.GetEventObject());
+	if (!input) {
+		return;
+	}
 
-    // Get the entered ID
-    long id;
-    if (input->GetValue().ToLong(&id)) {
-        if (input == replace_range_input) {
-            replace_button->SetItemId(id);
-            UpdateAddButtonState();
-        } else if (input == with_range_input) {
-            with_button->SetItemId(id);
-            UpdateAddButtonState();
-        }
-    }
+	const wxString value = input->GetValue().Trim();
+	if (!value.IsEmpty() && !value.Contains("-") && !value.Contains(",")) {
+		long id = 0;
+		if (value.ToLong(&id) && id > 0 && id <= 65535) {
+			if (input == replace_range_input) {
+				replace_button->SetItemId(static_cast<uint16_t>(id));
+			} else if (input == with_range_input) {
+				with_button->SetItemId(static_cast<uint16_t>(id));
+			}
+		}
+	}
+
+	SetPreviewSource(PreviewSource::Manual);
 }
 
 void ReplaceItemsDialog::UpdateAddButtonState() {
-    bool canAdd = false;
-    
-    // Check if we have valid IDs in either the range input or manual input
-    long replaceId = 0, withId = 0;
-    replace_range_input->GetValue().ToLong(&replaceId);
-    with_range_input->GetValue().ToLong(&withId);
-    
-    if (replaceId > 0 && withId > 0) {
-        const ItemType& replaceType = g_items.getItemType(replaceId);
-        const ItemType& withType = g_items.getItemType(withId);
-        canAdd = (replaceType.id != 0 && withType.id != 0);
-    }
-    
-    add_button->Enable(canAdd);
+	if (preview_source_ == PreviewSource::Manual) {
+		add_button->Enable(!BuildManualPreviewItems().empty());
+		return;
+	}
+
+	add_button->Enable(false);
 }
 
-std::vector<std::pair<uint16_t, uint16_t>> ReplaceItemsDialog::ParseRangeString(const wxString& input) {
-    std::vector<std::pair<uint16_t, uint16_t>> ranges;
-    wxStringTokenizer tokenizer(input, ",");
-    
-    while (tokenizer.HasMoreTokens()) {
-        wxString token = tokenizer.GetNextToken().Trim();
-        
-        if (token.Contains("-")) {
-            // Handle range (e.g., "100-105")
-            long start, end;
-            wxString startStr = token.Before('-').Trim();
-            wxString endStr = token.After('-').Trim();
-            
-            if (startStr.ToLong(&start) && endStr.ToLong(&end) && 
-                start > 0 && end > 0 && start <= end && end <= 65535) {
-                ranges.push_back({static_cast<uint16_t>(start), static_cast<uint16_t>(end)});
-            }
-        } else {
-            // Handle single number
-            long id;
-            if (token.ToLong(&id) && id > 0 && id <= 65535) {
-                ranges.push_back({static_cast<uint16_t>(id), static_cast<uint16_t>(id)});
-            }
-        }
-    }
-    
-    return ranges;
+int ReplaceItemsDialog::GetBorderXmlIndex(int choiceIdx) const {
+	if (choiceIdx <= 0 || choiceIdx > static_cast<int>(border_xml_indices_.size())) {
+		return -1;
+	}
+	return border_xml_indices_[choiceIdx - 1];
+}
+
+int ReplaceItemsDialog::GetWallXmlIndex(int choiceIdx) const {
+	if (choiceIdx <= 0 || choiceIdx > static_cast<int>(wall_xml_indices_.size())) {
+		return -1;
+	}
+	return wall_xml_indices_[choiceIdx - 1];
+}
+
+std::vector<uint16_t> ReplaceItemsDialog::FlattenRanges(const std::vector<std::pair<uint16_t, uint16_t>>& ranges) {
+	std::vector<uint16_t> ids;
+	for (const auto& range : ranges) {
+		for (uint16_t id = range.first; id <= range.second; ++id) {
+			ids.push_back(id);
+		}
+	}
+	return ids;
+}
+
+std::vector<std::pair<uint16_t, uint16_t>> ReplaceItemsDialog::ParseRangeString(const wxString& input) const {
+	wxString trimmed = input;
+	trimmed.Trim();
+	return parseIdRangesString(nstr(trimmed));
 }
 

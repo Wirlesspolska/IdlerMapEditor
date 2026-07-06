@@ -32,6 +32,12 @@ const wxString MainToolBar::STANDARD_BAR_NAME = "standard_toolbar";
 const wxString MainToolBar::BRUSHES_BAR_NAME = "brushes_toolbar";
 const wxString MainToolBar::POSITION_BAR_NAME = "position_toolbar";
 const wxString MainToolBar::SIZES_BAR_NAME = "sizes_toolbar";
+const wxString MainToolBar::BRUSH_SIZE_BAR_NAME = "brush_size_toolbar";
+
+static const wxString BRUSH_SIZE_TOOLTIP =
+	"Hold Shift and left-click drag on the map to resize the brush. "
+	"Release Shift to apply the new size, then left-click to paint. "
+	"You can also type a value here and press Enter.";
 
 #define loadPNGFile(name) _wxGetBitmapFromMemory(name, sizeof(name))
 inline wxBitmap* _wxGetBitmapFromMemory(const unsigned char* data, int length) {
@@ -43,7 +49,10 @@ inline wxBitmap* _wxGetBitmapFromMemory(const unsigned char* data, int length) {
 	return newd wxBitmap(img, -1);
 }
 
-MainToolBar::MainToolBar(wxWindow* parent, wxAuiManager* manager) {
+MainToolBar::MainToolBar(wxWindow* parent, wxAuiManager* manager) :
+	brush_size_toolbar(nullptr),
+	brush_width_control(nullptr),
+	brush_height_control(nullptr) {
 	wxSize icon_size = FROM_DIP(parent, wxSize(16, 16));
 	wxBitmap new_bitmap = wxArtProvider::GetBitmap(wxART_NEW, wxART_TOOLBAR, icon_size);
 	wxBitmap open_bitmap = wxArtProvider::GetBitmap(wxART_FILE_OPEN, wxART_TOOLBAR, icon_size);
@@ -156,10 +165,13 @@ MainToolBar::MainToolBar(wxWindow* parent, wxAuiManager* manager) {
 	sizes_toolbar->ToggleTool(TOOLBAR_SIZES_RECTANGULAR, true);
 	sizes_toolbar->ToggleTool(TOOLBAR_SIZES_1, true);
 
+	CreateBrushSizeToolbar(parent);
+
 	manager->AddPane(standard_toolbar, wxAuiPaneInfo().Name(STANDARD_BAR_NAME).ToolbarPane().Top().Row(1).Position(1).Floatable(false));
-	manager->AddPane(brushes_toolbar, wxAuiPaneInfo().Name(BRUSHES_BAR_NAME).ToolbarPane().Top().Row(1).Position(2).Floatable(false));
-	manager->AddPane(position_toolbar, wxAuiPaneInfo().Name(POSITION_BAR_NAME).ToolbarPane().Top().Row(1).Position(4).Floatable(false));
-	manager->AddPane(sizes_toolbar, wxAuiPaneInfo().Name(SIZES_BAR_NAME).ToolbarPane().Top().Row(1).Position(3).Floatable(false));
+	manager->AddPane(brush_size_toolbar, wxAuiPaneInfo().Name(BRUSH_SIZE_BAR_NAME).ToolbarPane().Top().Row(1).Position(2).Floatable(false));
+	manager->AddPane(brushes_toolbar, wxAuiPaneInfo().Name(BRUSHES_BAR_NAME).ToolbarPane().Top().Row(1).Position(3).Floatable(false));
+	manager->AddPane(sizes_toolbar, wxAuiPaneInfo().Name(SIZES_BAR_NAME).ToolbarPane().Top().Row(1).Position(4).Floatable(false));
+	manager->AddPane(position_toolbar, wxAuiPaneInfo().Name(POSITION_BAR_NAME).ToolbarPane().Top().Row(1).Position(5).Floatable(false));
 
 	standard_toolbar->Bind(wxEVT_COMMAND_MENU_SELECTED, &MainToolBar::OnStandardButtonClick, this);
 	brushes_toolbar->Bind(wxEVT_COMMAND_MENU_SELECTED, &MainToolBar::OnBrushesButtonClick, this);
@@ -186,6 +198,14 @@ MainToolBar::~MainToolBar() {
 	z_control->Unbind(wxEVT_KEY_UP, &MainToolBar::OnPositionKeyUp, this);
 	go_button->Unbind(wxEVT_BUTTON, &MainToolBar::OnPositionButtonClick, this);
 	sizes_toolbar->Unbind(wxEVT_COMMAND_MENU_SELECTED, &MainToolBar::OnSizesButtonClick, this);
+	if (brush_width_control) {
+		brush_width_control->Unbind(wxEVT_KEY_UP, &MainToolBar::OnBrushSizeKeyUp, this);
+		brush_width_control->Unbind(wxEVT_KILL_FOCUS, &MainToolBar::OnBrushSizeKillFocus, this);
+	}
+	if (brush_height_control) {
+		brush_height_control->Unbind(wxEVT_KEY_UP, &MainToolBar::OnBrushSizeKeyUp, this);
+		brush_height_control->Unbind(wxEVT_KILL_FOCUS, &MainToolBar::OnBrushSizeKillFocus, this);
+	}
 	if (tooltip_enable_chk) {
 		tooltip_enable_chk->Unbind(wxEVT_CHECKBOX, &MainToolBar::OnTooltipCheckbox, this);
 	}
@@ -225,6 +245,7 @@ void MainToolBar::CreateTooltipQuickControls() {
 	tooltip_text_chk = nullptr;
 	tooltip_script_chk = nullptr;
 	tooltip_house_chk = nullptr;
+	tooltip_container_chk = nullptr;
 
 	auto addCheckbox = [&](int id, const wxString& label, const wxString& tip, wxCheckBox*& out) {
 		out = newd wxCheckBox(standard_toolbar, id, label);
@@ -242,9 +263,31 @@ void MainToolBar::CreateTooltipQuickControls() {
 	addCheckbox(TOOLBAR_TOOLTIP_TEXT, "Text", "Show item text in tooltips", tooltip_text_chk);
 	addCheckbox(TOOLBAR_TOOLTIP_SCRIPT, "Script", "Show hasScript in tooltips", tooltip_script_chk);
 	addCheckbox(TOOLBAR_TOOLTIP_HOUSE, "House", "Show house ID on house tiles", tooltip_house_chk);
+	addCheckbox(TOOLBAR_TOOLTIP_CONTAINER, "Contains", "Show container item sprites in tooltips", tooltip_container_chk);
 
 	SyncTooltipQuickControls();
 	UpdateTooltipQuickControlStates();
+}
+
+void MainToolBar::CreateBrushSizeToolbar(wxWindow* parent) {
+	brush_size_toolbar = newd wxAuiToolBar(parent, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxAUI_TB_DEFAULT_STYLE | wxAUI_TB_HORZ_TEXT);
+	brush_size_toolbar->SetToolBitmapSize(FROM_DIP(parent, wxSize(16, 16)));
+
+	brush_width_control = newd NumberTextCtrl(brush_size_toolbar, wxID_ANY, 1, 1, 999, wxTE_PROCESS_ENTER, "X", wxDefaultPosition, FROM_DIP(parent, wxSize(45, 20)));
+	brush_width_control->SetToolTip("Brush width in tiles.\n" + BRUSH_SIZE_TOOLTIP);
+	brush_height_control = newd NumberTextCtrl(brush_size_toolbar, wxID_ANY, 1, 1, 999, wxTE_PROCESS_ENTER, "Y", wxDefaultPosition, FROM_DIP(parent, wxSize(45, 20)));
+	brush_height_control->SetToolTip("Brush height in tiles.\n" + BRUSH_SIZE_TOOLTIP);
+
+	brush_size_toolbar->AddControl(brush_width_control);
+	brush_size_toolbar->AddControl(brush_height_control);
+	brush_size_toolbar->Realize();
+
+	brush_width_control->Bind(wxEVT_KEY_UP, &MainToolBar::OnBrushSizeKeyUp, this);
+	brush_width_control->Bind(wxEVT_KILL_FOCUS, &MainToolBar::OnBrushSizeKillFocus, this);
+	brush_height_control->Bind(wxEVT_KEY_UP, &MainToolBar::OnBrushSizeKeyUp, this);
+	brush_height_control->Bind(wxEVT_KILL_FOCUS, &MainToolBar::OnBrushSizeKillFocus, this);
+
+	UpdateBrushSizeControls();
 }
 
 void MainToolBar::SyncTooltipQuickControls() {
@@ -262,6 +305,7 @@ void MainToolBar::SyncTooltipQuickControls() {
 	tooltip_text_chk->SetValue(g_settings.getBoolean(Config::TOOLTIP_SHOW_TEXT));
 	tooltip_script_chk->SetValue(g_settings.getBoolean(Config::TOOLTIP_SHOW_HASSCRIPT));
 	tooltip_house_chk->SetValue(g_settings.getBoolean(Config::TOOLTIP_SHOW_HOUSEID));
+	tooltip_container_chk->SetValue(g_settings.getBoolean(Config::TOOLTIP_SHOW_CONTAINER_CONTAINS));
 }
 
 void MainToolBar::UpdateTooltipQuickControlStates() {
@@ -278,6 +322,7 @@ void MainToolBar::UpdateTooltipQuickControlStates() {
 	tooltip_text_chk->Enable(tooltipsOn);
 	tooltip_script_chk->Enable(tooltipsOn);
 	tooltip_house_chk->Enable(tooltipsOn);
+	tooltip_container_chk->Enable(tooltipsOn);
 }
 
 void MainToolBar::OnTooltipCheckbox(wxCommandEvent& event) {
@@ -313,6 +358,9 @@ void MainToolBar::OnTooltipCheckbox(wxCommandEvent& event) {
 			break;
 		case TOOLBAR_TOOLTIP_HOUSE:
 			g_settings.setInteger(Config::TOOLTIP_SHOW_HOUSEID, checked);
+			break;
+		case TOOLBAR_TOOLTIP_CONTAINER:
+			g_settings.setInteger(Config::TOOLTIP_SHOW_CONTAINER_CONTAINS, checked);
 			break;
 		default:
 			return;
@@ -376,6 +424,13 @@ void MainToolBar::UpdateButtons() {
 	sizes_toolbar->EnableTool(TOOLBAR_SIZES_5, has_map);
 	sizes_toolbar->EnableTool(TOOLBAR_SIZES_6, has_map);
 	sizes_toolbar->EnableTool(TOOLBAR_SIZES_7, has_map);
+
+	if (brush_width_control) {
+		brush_width_control->Enable(has_map && g_gui.GetBrushShape() == BRUSHSHAPE_SQUARE);
+	}
+	if (brush_height_control) {
+		brush_height_control->Enable(has_map && g_gui.GetBrushShape() == BRUSHSHAPE_SQUARE);
+	}
 }
 
 void MainToolBar::UpdateBrushButtons() {
@@ -451,7 +506,81 @@ void MainToolBar::UpdateBrushSize(BrushShape shape, int size) {
 	sizes_toolbar->ToggleTool(TOOLBAR_SIZES_6, size == 8);
 	sizes_toolbar->ToggleTool(TOOLBAR_SIZES_7, size == 11);
 
+	UpdateBrushSizeControls();
+
 	g_gui.GetAuiManager()->Update();
+}
+
+void MainToolBar::UpdateBrushSizeControls() {
+	if (!brush_width_control || !brush_height_control) {
+		return;
+	}
+
+	const int width = g_gui.GetBrushWidth();
+	const int height = g_gui.GetBrushHeight();
+
+	wxString width_text;
+	width_text << width;
+	if (brush_width_control->GetValue() != width_text) {
+		brush_width_control->ChangeValue(width_text);
+	}
+
+	wxString height_text;
+	height_text << height;
+	if (brush_height_control->GetValue() != height_text) {
+		brush_height_control->ChangeValue(height_text);
+	}
+
+	const bool canEdit = g_gui.IsEditorOpen() && g_gui.GetBrushShape() == BRUSHSHAPE_SQUARE;
+	brush_width_control->Enable(canEdit);
+	brush_height_control->Enable(canEdit);
+}
+
+void MainToolBar::ApplyBrushSizeFromControls() {
+	if (!brush_width_control || !brush_height_control) {
+		return;
+	}
+
+	if (!g_gui.IsEditorOpen() || g_gui.GetBrushShape() != BRUSHSHAPE_SQUARE) {
+		return;
+	}
+
+	int width = brush_width_control->GetIntValue();
+	int height = brush_height_control->GetIntValue();
+	if (width < 1) {
+		width = 1;
+	}
+	if (height < 1) {
+		height = 1;
+	}
+
+	g_gui.SetCustomBrushSize(true, width, height);
+
+	wxString status;
+	status << "Custom brush size set to " << width << "x" << height;
+	g_gui.SetStatusText(status);
+}
+
+void MainToolBar::OnBrushSizeKeyUp(wxKeyEvent& event) {
+	if (event.GetKeyCode() == WXK_TAB) {
+		if (brush_width_control->HasFocus()) {
+			brush_height_control->SelectAll();
+			brush_height_control->SetFocus();
+		}
+	} else if (event.GetKeyCode() == WXK_NUMPAD_ENTER || event.GetKeyCode() == WXK_RETURN) {
+		ApplyBrushSizeFromControls();
+	}
+	event.Skip();
+}
+
+void MainToolBar::OnBrushSizeKillFocus(wxFocusEvent& event) {
+	if (event.GetWindow() == brush_width_control || event.GetWindow() == brush_height_control) {
+		wxWindow* focus = wxWindow::FindFocus();
+		if (focus != brush_width_control && focus != brush_height_control) {
+			ApplyBrushSizeFromControls();
+		}
+	}
+	event.Skip();
 }
 
 void MainToolBar::Show(ToolBarID id, bool show) {
@@ -460,6 +589,12 @@ void MainToolBar::Show(ToolBarID id, bool show) {
 		wxAuiPaneInfo& pane = GetPane(id);
 		if (pane.IsOk()) {
 			pane.Show(show);
+			if (id == TOOLBAR_STANDARD) {
+				wxAuiPaneInfo& brushSizePane = GetPane(TOOLBAR_BRUSH_SIZE);
+				if (brushSizePane.IsOk()) {
+					brushSizePane.Show(show);
+				}
+			}
 			manager->Update();
 		}
 	}
@@ -495,8 +630,10 @@ void MainToolBar::LoadPerspective() {
 			manager->LoadPaneInfo(wxString(info), GetPane(TOOLBAR_STANDARD));
 		}
 		GetPane(TOOLBAR_STANDARD).Show();
+		GetPane(TOOLBAR_BRUSH_SIZE).Show();
 	} else {
 		GetPane(TOOLBAR_STANDARD).Hide();
+		GetPane(TOOLBAR_BRUSH_SIZE).Hide();
 	}
 
 	if (g_settings.getBoolean(Config::SHOW_TOOLBAR_BRUSHES)) {
@@ -527,6 +664,13 @@ void MainToolBar::LoadPerspective() {
 		GetPane(TOOLBAR_SIZES).Show();
 	} else {
 		GetPane(TOOLBAR_SIZES).Hide();
+	}
+
+	if (standard_toolbar) {
+		standard_toolbar->Realize();
+	}
+	if (brush_size_toolbar) {
+		brush_size_toolbar->Realize();
 	}
 
 	manager->Update();
@@ -707,24 +851,31 @@ void MainToolBar::OnSizesButtonClick(wxCommandEvent& event) {
 			g_gui.SetBrushShape(BRUSHSHAPE_SQUARE);
 			break;
 		case TOOLBAR_SIZES_1:
+			g_gui.SetCustomBrushSize(false);
 			g_gui.SetBrushSize(0);
 			break;
 		case TOOLBAR_SIZES_2:
+			g_gui.SetCustomBrushSize(false);
 			g_gui.SetBrushSize(1);
 			break;
 		case TOOLBAR_SIZES_3:
+			g_gui.SetCustomBrushSize(false);
 			g_gui.SetBrushSize(2);
 			break;
 		case TOOLBAR_SIZES_4:
+			g_gui.SetCustomBrushSize(false);
 			g_gui.SetBrushSize(4);
 			break;
 		case TOOLBAR_SIZES_5:
+			g_gui.SetCustomBrushSize(false);
 			g_gui.SetBrushSize(6);
 			break;
 		case TOOLBAR_SIZES_6:
+			g_gui.SetCustomBrushSize(false);
 			g_gui.SetBrushSize(8);
 			break;
 		case TOOLBAR_SIZES_7:
+			g_gui.SetCustomBrushSize(false);
 			g_gui.SetBrushSize(11);
 			break;
 		default:
@@ -741,6 +892,8 @@ wxAuiPaneInfo& MainToolBar::GetPane(ToolBarID id) {
 	switch (id) {
 		case TOOLBAR_STANDARD:
 			return manager->GetPane(STANDARD_BAR_NAME);
+		case TOOLBAR_BRUSH_SIZE:
+			return manager->GetPane(BRUSH_SIZE_BAR_NAME);
 		case TOOLBAR_BRUSHES:
 			return manager->GetPane(BRUSHES_BAR_NAME);
 		case TOOLBAR_POSITION:

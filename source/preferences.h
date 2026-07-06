@@ -39,15 +39,18 @@ public:
 	void OnForceReloadRevScripts(wxCommandEvent&);
 
 	void OnCollapsiblePane(wxCollapsiblePaneEvent&);
+	void OnClose(wxCloseEvent&);
 
-	void UpdateClientOverride();
+	void SelectClientVersionPage();
 
 protected:
 	void SetDefaults();
 	void Apply();
 	void SaveValues();
 
-	wxBookCtrl* book;
+	void UpdateClientOverride();
+
+	wxListbook* book;
 
 	// General
 	wxCheckBox* always_make_backup_chkbox;
@@ -80,6 +83,7 @@ protected:
 	wxCheckBox* icon_selection_shadow_chkbox;
 	wxChoice* icon_background_choice;
 	wxCheckBox* use_memcached_chkbox;
+	wxCheckBox* sprite_transparency_chkbox;
 	wxDirPickerCtrl* screenshot_directory_picker;
 	wxDirPickerCtrl* revscript_directory_picker;
 	wxButton* force_reload_revscripts_btn;
@@ -216,6 +220,7 @@ protected:
 	wxCheckBox* tooltip_show_doorid_chkbox;
 	wxCheckBox* tooltip_show_destination_chkbox;
 	wxCheckBox* tooltip_show_houseid_chkbox;
+	wxCheckBox* tooltip_show_container_contains_chkbox;
 	wxCheckBox* house_custom_colors_chkbox;
 
 	// Map warning suppression

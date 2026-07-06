@@ -18,7 +18,7 @@
 #include "main.h"
 #include "welcome_dialog.h"
 #include "settings.h"
-#include "preferences.h"
+#include "gui.h"
 
 wxDEFINE_EVENT(WELCOME_DIALOG_ACTION, wxCommandEvent);
 
@@ -35,8 +35,7 @@ void WelcomeDialog::OnButtonClicked(const wxMouseEvent& event) {
 	wxPoint click_point = event.GetPosition();
 	if (click_point.x > 0 && click_point.x < button_size.x && click_point.y > 0 && click_point.y < button_size.x) {
 		if (button->GetAction() == wxID_PREFERENCES) {
-			PreferencesWindow preferences_window(m_welcome_dialog_panel, true);
-			preferences_window.ShowModal();
+			g_gui.ShowPreferencesWindow(true);
 			m_welcome_dialog_panel->updateInputs();
 		} else {
 			wxCommandEvent action_event(WELCOME_DIALOG_ACTION);

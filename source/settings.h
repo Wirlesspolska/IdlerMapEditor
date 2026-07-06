@@ -37,6 +37,7 @@ namespace Config {
 		HARD_REFRESH_RATE,
 		USE_MEMCACHED_SPRITES,
 		USE_MEMCACHED_SPRITES_TO_SAVE,
+		SPRITE_TRANSPARENCY,
 		SOFTWARE_CLEAN_THRESHOLD,
 		SOFTWARE_CLEAN_SIZE,
 		TRANSPARENT_FLOORS,
@@ -241,6 +242,7 @@ namespace Config {
 		TOOLTIP_SHOW_DOORID,          // bool: show door ID in tooltips
 		TOOLTIP_SHOW_DESTINATION,     // bool: show teleport destination in tooltips
 		TOOLTIP_SHOW_HOUSEID,         // bool: show house ID in tooltips
+		TOOLTIP_SHOW_CONTAINER_CONTAINS, // bool: show container item sprites in tooltips
 		HOUSE_CUSTOM_COLORS,          // bool: use house ID colors to color house tiles
 		
 		REFRESH_RADIUS,               // int: radius for visible area refresh in multiplayer

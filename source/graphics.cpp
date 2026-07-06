@@ -207,7 +207,30 @@ GraphicManager::~GraphicManager() {
 }
 
 bool GraphicManager::hasTransparency() const {
-	return has_transparency;
+	return has_transparency || g_settings.getBoolean(Config::SPRITE_TRANSPARENCY);
+}
+
+void GraphicManager::invalidateAllSpriteTextures() {
+	for (ImageMap::iterator iit = image_space.begin(); iit != image_space.end(); ++iit) {
+		if (iit->second) {
+			iit->second->invalidateGLTexture();
+		}
+	}
+
+	for (SpriteMap::iterator sit = sprite_space.begin(); sit != sprite_space.end(); ++sit) {
+		if (sit->first < 0) {
+			continue;
+		}
+
+		GameSprite* gs = static_cast<GameSprite*>(sit->second);
+		for (std::list<GameSprite::TemplateImage*>::iterator tit = gs->instanced_templates.begin(); tit != gs->instanced_templates.end(); ++tit) {
+			if (*tit) {
+				(*tit)->invalidateGLTexture();
+			}
+		}
+	}
+
+	cleanSoftwareSprites();
 }
 
 bool GraphicManager::isUnloaded() const {
@@ -1481,6 +1504,12 @@ void GameSprite::NormalImage::unloadGLTexture(GLuint ignored) {
 	Image::unloadGLTexture(id);
 }
 
+void GameSprite::NormalImage::invalidateGLTexture() {
+	if (isGLLoaded) {
+		unloadGLTexture(id);
+	}
+}
+
 GameSprite::TemplateImage::TemplateImage(GameSprite* parent, int v, const Outfit& outfit) :
 	gl_tid(0),
 	parent(parent),
@@ -1628,6 +1657,12 @@ void GameSprite::TemplateImage::createGLTexture(GLuint unused) {
 
 void GameSprite::TemplateImage::unloadGLTexture(GLuint unused) {
 	Image::unloadGLTexture(gl_tid);
+}
+
+void GameSprite::TemplateImage::invalidateGLTexture() {
+	if (isGLLoaded) {
+		unloadGLTexture(gl_tid);
+	}
 }
 
 // ============================================================================

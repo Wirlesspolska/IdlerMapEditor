@@ -68,6 +68,7 @@ public:
 	bool CanAdd(uint16_t replaceId, uint16_t withId) const;
 	const std::vector<ReplacingItem>& GetItems() const { return m_items; }
 	void Clear();
+	void SetItems(const std::vector<ReplacingItem>& items);
 
 	void OnDrawItem(wxDC& dc, const wxRect& rect, size_t index) const override;
 	wxCoord OnMeasureItem(size_t index) const override;
@@ -132,19 +133,37 @@ public:
 	uint16_t getActualItemIdFromBrush(const Brush* brush) const;
 	void OnBorderFromSelect(wxCommandEvent& event);
 	void OnBorderToSelect(wxCommandEvent& event);
-	wxString GetDataDirectoryForVersion(const wxString& versionStr);
+	wxString GetDataDirectoryForVersion(const wxString& versionStr) const;
 	void AddWallVariations(uint16_t fromId, uint16_t toId);
 	void LoadWallChoices();
 	void OnWallFromSelect(wxCommandEvent& event);
 	void OnWallToSelect(wxCommandEvent& event);
+	void OnWallOrientationSelect(wxCommandEvent& event);
 	void OnAddWallItems(wxCommandEvent& event);
-		void AddReplacingItem(uint16_t fromId, uint16_t toId);
+	void AddReplacingItem(uint16_t fromId, uint16_t toId);
+
+	enum class PreviewSource {
+		Manual,
+		Border,
+		Wall
+	};
 
 private:
 	void UpdateWidgets();
+	void UpdatePreviewList();
+	void SetPreviewSource(PreviewSource source);
+	std::vector<ReplacingItem> BuildBorderPreviewItems() const;
+	std::vector<ReplacingItem> BuildWallPreviewItems() const;
+	std::vector<ReplacingItem> BuildManualPreviewItems() const;
+	void AddPreviewItemsToList();
+	int GetBorderXmlIndex(int choiceIdx) const;
+	int GetWallXmlIndex(int choiceIdx) const;
+	static std::vector<uint16_t> FlattenRanges(const std::vector<std::pair<uint16_t, uint16_t>>& ranges);
 
 
 	ReplaceItemsListBox* list;
+	ReplaceItemsListBox* preview_list;
+	PreviewSource preview_source_;
 	ReplaceItemsButton* replace_button;
 	ReplaceItemsButton* with_button;
 	wxGauge* progress;
@@ -183,6 +202,8 @@ private:
 	wxChoice* wall_orientation_choice;
 	wxButton* add_wall_button;
 
+	std::vector<int> border_xml_indices_;
+	std::vector<int> wall_xml_indices_;
 
 	void OnPresetSelect(wxCommandEvent& event);
 	void OnAddPreset(wxCommandEvent& event);
@@ -206,7 +227,7 @@ private:
 	void OnIdInput(wxCommandEvent& event);
 	void UpdateAddButtonState();
 
-	std::vector<std::pair<uint16_t, uint16_t>> ParseRangeString(const wxString& input);
+	std::vector<std::pair<uint16_t, uint16_t>> ParseRangeString(const wxString& input) const;
 };
 
 #endif

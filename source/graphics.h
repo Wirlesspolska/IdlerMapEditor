@@ -132,6 +132,8 @@ protected:
 		virtual uint8_t* getRGBData() = 0;
 		virtual uint8_t* getRGBAData() = 0;
 
+		virtual void invalidateGLTexture() { }
+
 	protected:
 		virtual void createGLTexture(GLuint whatid);
 		virtual void unloadGLTexture(GLuint whatid);
@@ -157,6 +159,8 @@ protected:
 		virtual uint8_t* getRGBData();
 		virtual uint8_t* getRGBAData();
 
+		virtual void invalidateGLTexture() override;
+
 	protected:
 		virtual void createGLTexture(GLuint ignored = 0);
 		virtual void unloadGLTexture(GLuint ignored = 0);
@@ -170,6 +174,8 @@ protected:
 		virtual GLuint getHardwareID();
 		virtual uint8_t* getRGBData();
 		virtual uint8_t* getRGBAData();
+
+		virtual void invalidateGLTexture() override;
 
 		GLuint gl_tid;
 		GameSprite* parent;
@@ -316,6 +322,7 @@ public:
 	}
 
 	bool hasTransparency() const;
+	void invalidateAllSpriteTextures();
 	bool isUnloaded() const;
 
 	ClientVersion* client_version;

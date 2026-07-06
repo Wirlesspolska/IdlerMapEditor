@@ -34,6 +34,7 @@ public:
 	void UpdateButtons();
 	void UpdateBrushButtons();
 	void UpdateBrushSize(BrushShape shape, int size);
+	void UpdateBrushSizeControls();
 	void Show(ToolBarID id, bool show);
 	void HideAll(bool update = true);
 	void LoadPerspective();
@@ -46,6 +47,9 @@ public:
 	void OnPositionKeyUp(wxKeyEvent& event);
 	void OnPastePositionText(wxClipboardTextEvent& event);
 	void OnSizesButtonClick(wxCommandEvent& event);
+	void OnBrushSizeKeyUp(wxKeyEvent& event);
+	void OnBrushSizeKillFocus(wxFocusEvent& event);
+	void ApplyBrushSizeFromControls();
 	void OnTooltipCheckbox(wxCommandEvent& event);
 
 public:
@@ -54,10 +58,12 @@ public:
 
 private:
 	void CreateTooltipQuickControls();
+	void CreateBrushSizeToolbar(wxWindow* parent);
 	static const wxString STANDARD_BAR_NAME;
 	static const wxString BRUSHES_BAR_NAME;
 	static const wxString POSITION_BAR_NAME;
 	static const wxString SIZES_BAR_NAME;
+	static const wxString BRUSH_SIZE_BAR_NAME;
 
 	wxAuiToolBar* standard_toolbar;
 	wxAuiToolBar* brushes_toolbar;
@@ -67,6 +73,9 @@ private:
 	NumberTextCtrl* z_control;
 	wxButton* go_button;
 	wxAuiToolBar* sizes_toolbar;
+	wxAuiToolBar* brush_size_toolbar;
+	NumberTextCtrl* brush_width_control;
+	NumberTextCtrl* brush_height_control;
 
 	wxCheckBox* tooltip_enable_chk;
 	wxCheckBox* tooltip_aid_chk;
@@ -77,6 +86,7 @@ private:
 	wxCheckBox* tooltip_text_chk;
 	wxCheckBox* tooltip_script_chk;
 	wxCheckBox* tooltip_house_chk;
+	wxCheckBox* tooltip_container_chk;
 };
 
 #endif // RME_MAINTOOLBAR_H_

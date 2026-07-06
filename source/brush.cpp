@@ -167,6 +167,14 @@ bool Brushes::unserializeBrush(pugi::xml_node node, wxArrayString& warnings) {
 	return true;
 }
 
+void Brushes::removeBorder(uint32_t id) {
+	auto it = borders.find(id);
+	if (it != borders.end()) {
+		delete it->second;
+		borders.erase(it);
+	}
+}
+
 bool Brushes::unserializeBorder(pugi::xml_node node, wxArrayString& warnings) {
 	pugi::xml_attribute attribute = node.attribute("id");
 	if (!attribute) {

@@ -77,6 +77,8 @@ public:
 		return brushes;
 	}
 
+	void removeBorder(uint32_t id);
+
 protected:
 	typedef std::map<uint32_t, AutoBorder*> BorderMap;
 	BrushMap brushes;

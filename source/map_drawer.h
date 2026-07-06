@@ -25,6 +25,7 @@
 #include <memory>
 
 class GameSprite;
+class Container;
 
 struct MapTooltip {
 	enum TextLength {
@@ -47,6 +48,33 @@ struct MapTooltip {
 	std::string text;
 	uint8_t r, g, b;
 	bool ellipsis;
+};
+
+struct ContainerContentsTooltip {
+	enum Layout {
+		SPRITE_SIZE = 16,
+		SPACING = 5,
+		MAX_COLS = 5,
+		PADDING = 4,
+		NAV_SIZE = 12,
+	};
+
+	ContainerContentsTooltip(int x, int y, const Position& mapPos, std::vector<Container*> containers, int selectedIndex) :
+		x(x), y(y), mapPos(mapPos), containers(std::move(containers)), selectedIndex(selectedIndex),
+		hasNav(false), navLeft(0), navTop(0), navRight(0), navBottom(0) { }
+
+	int x, y;
+	Position mapPos;
+	std::vector<Container*> containers;
+	int selectedIndex;
+	bool hasNav;
+	float navLeft, navTop, navRight, navBottom;
+};
+
+struct ContainerTooltipNavHit {
+	Position mapPos;
+	float navLeft, navTop, navRight, navBottom;
+	int containerCount;
 };
 
 // Storage during drawing, for option caching
@@ -262,6 +290,9 @@ class MapDrawer {
 protected:
 	std::unordered_map<uint16_t, std::vector<FinderPosition>> zoneTiles;
 	std::vector<MapTooltip*> tooltips;
+	std::vector<ContainerContentsTooltip*> container_tooltips;
+	std::vector<ContainerTooltipNavHit> container_nav_hits;
+	std::unordered_map<uint64_t, int> container_tooltip_selection;
 	std::ostringstream tooltip;
 
 public:
@@ -296,6 +327,8 @@ public:
 		return options;
 	}
 
+	bool HandleContainerTooltipNavClick(float glx, float gly);
+
 protected:
 	void BlitItem(int& screenx, int& screeny, const Tile* tile, Item* item, bool ephemeral = false, int red = 255, int green = 255, int blue = 255, int alpha = 255);
 	void BlitItem(int& screenx, int& screeny, const Position& pos, Item* item, bool ephemeral = false, int red = 255, int green = 255, int blue = 255, int alpha = 255, const Tile* tile = nullptr);
@@ -312,6 +345,10 @@ protected:
 	void WriteTooltip(Tile* tile, Item* item, std::ostringstream& stream, bool isHouseTile);
 	void WriteTooltip(Waypoint* item, std::ostringstream& stream);
 	void MakeTooltip(int screenx, int screeny, const std::string& text, uint8_t r = 255, uint8_t g = 255, uint8_t b = 255);
+	void MakeContainerContentsTooltip(int screenx, int screeny, const Position& mapPos, const std::vector<Container*>& containers);
+	void DrawContainerContentsTooltips();
+	void BlitItemIcon(int screenx, int screeny, Item* item, int size, const Position& pos, const Tile* tile = nullptr);
+	void glBlitTexture(int sx, int sy, int texture_number, int size, int red, int green, int blue, int alpha);
 	void AddLight(TileLocation* location);
 
 	enum BrushColor {

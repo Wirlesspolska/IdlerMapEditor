@@ -19,9 +19,13 @@
 #include <wx/choice.h>
 #include <vector>
 #include <map>
+#include <set>
+
+#include "dcbutton.h"
 
 class BorderItemButton;
 class BorderGridPanel;
+class BorderItemPicker;
 
 // Represents a border edge position
 enum BorderEdgePosition {
@@ -45,6 +49,24 @@ enum BorderEdgePosition {
 enum BorderAlignment {
     ALIGN_OUTER,
     ALIGN_INNER
+};
+
+// Visual modes for the border grid panel
+enum BorderGridViewMode {
+    GRID_VIEW_EDGES,   // 3x3 slot editor for all 12 edge types
+    GRID_VIEW_MAP,     // Neighborhood map preview
+    GRID_VIEW_OUTER,   // Outer alignment preview
+    GRID_VIEW_INNER    // Inner alignment preview
+};
+
+// Maps a 3x3 grid cell to one or two border edge positions
+struct BorderGridCell {
+    BorderEdgePosition primary;
+    BorderEdgePosition secondary; // EDGE_NONE when unused
+
+    BorderGridCell() : primary(EDGE_NONE), secondary(EDGE_NONE) {}
+    BorderGridCell(BorderEdgePosition p, BorderEdgePosition s = EDGE_NONE) :
+        primary(p), secondary(s) {}
 };
 
 // Utility function to convert border edge string to position
@@ -107,12 +129,20 @@ public:
     void OnRemoveGroundItem(wxCommandEvent& event);
     void OnLoadGroundBrush(wxCommandEvent& event);
     void OnGroundBrowse(wxCommandEvent& event);
+    void OnGridViewChanged(wxBookCtrlEvent& event);
+    void OnServerLookPickerClick(wxMouseEvent& event);
+    void OnGroundItemPickerClick(wxMouseEvent& event);
+    void OnBorderItemPickerClick(wxMouseEvent& event);
+    void OnCreateTileset(wxCommandEvent& event);
+    void OnTestBrush(wxCommandEvent& event);
+    void OnZOrderChoice(wxCommandEvent& event);
 
 protected:
     void CreateGUIControls();
     void LoadExistingBorders();
     void LoadExistingGroundBrushes();
     void LoadTilesets();
+    void LoadDetectedZOrders();
     void SaveBorder();
     void SaveGroundBrush();
     bool ValidateBorder();
@@ -121,6 +151,14 @@ protected:
     void ClearItems();
     void ClearGroundItems();
     void UpdateGroundItemsList();
+    void LoadBorderById(int borderId);
+    void AutoLoadDemoBorder();
+    uint16_t GetItemIdFromCurrentBrush() const;
+    void ApplyItemIdFromBrush(uint16_t itemId, BorderItemPicker* picker, wxSpinCtrl* spinCtrl);
+    wxString GetVersionDataDirectory() const;
+    wxString GetVersionFilePath(const wxString& filename) const;
+    void ReloadBorderInMemory(int borderId);
+    void AddTilesetToMemory(const wxString& name);
 
 public:
     // UI Elements - made public so they can be accessed by other components
@@ -136,13 +174,18 @@ public:
     wxCheckBox* m_isGroundCheck;
     wxSpinCtrl* m_groupCtrl;
     wxSpinCtrl* m_itemIdCtrl;
+    BorderItemPicker* m_borderItemPicker;
+    wxNotebook* m_gridViewNotebook;
     
     // Ground Tab
     wxPanel* m_groundPanel;
     wxComboBox* m_existingGroundBrushesCombo;
     wxSpinCtrl* m_serverLookIdCtrl;
+    BorderItemPicker* m_serverLookPicker;
+    wxChoice* m_zOrderChoice;
     wxSpinCtrl* m_zOrderCtrl;
     wxSpinCtrl* m_groundItemIdCtrl;
+    BorderItemPicker* m_groundItemPicker;
     wxSpinCtrl* m_groundItemChanceCtrl;
     wxListBox* m_groundItemsList;
     
@@ -153,6 +196,7 @@ public:
     
     // Tileset selector for ground brushes
     wxChoice* m_tilesetChoice;
+    wxButton* m_newTilesetButton;
     
     // Map of tileset names to internal identifiers
     std::map<wxString, wxString> m_tilesets;
@@ -202,6 +246,18 @@ private:
 };
 
 // Grid panel to visually show border item positions
+// Sprite preview button with item-id support (same pattern as Replace Items window)
+class BorderItemPicker : public DCButton {
+public:
+    BorderItemPicker(wxWindow* parent, wxWindowID id = wxID_ANY);
+
+    void SetItemId(uint16_t id);
+    uint16_t GetItemId() const { return m_itemId; }
+
+private:
+    uint16_t m_itemId;
+};
+
 class BorderGridPanel : public wxPanel {
 public:
     BorderGridPanel(wxWindow* parent, wxWindowID id = wxID_ANY);
@@ -213,18 +269,31 @@ public:
     
     void SetSelectedPosition(BorderEdgePosition pos);
     BorderEdgePosition GetSelectedPosition() const { return m_selectedPosition; }
+
+    void SetViewMode(BorderGridViewMode mode);
+    BorderGridViewMode GetViewMode() const { return m_viewMode; }
+    void SetCenterGroundItemId(uint16_t itemId);
+    uint16_t GetCenterGroundItemId() const { return m_centerGroundItemId; }
     
     void OnPaint(wxPaintEvent& event);
     void OnMouseClick(wxMouseEvent& event);
     void OnMouseDown(wxMouseEvent& event);
     
-    // Made public so it can be accessed from other components
-    wxPoint GetPositionCoordinates(BorderEdgePosition pos) const;
     BorderEdgePosition GetPositionFromCoordinates(int x, int y) const;
-    
+
 private:
+    void DrawEdgeLayout(wxDC& dc, const wxRect& rect);
+    void DrawMapPreview(wxDC& dc, const wxRect& rect, bool innerStyle);
+    void DrawSpriteForItem(wxDC& dc, uint16_t itemId, int x, int y, int w, int h);
+    BorderEdgePosition HitTestEdgeCell(int x, int y, const wxRect& rect) const;
+    void GetEdgeCellRect(int col, int row, const wxRect& panelRect, wxRect& out) const;
+
     std::map<BorderEdgePosition, uint16_t> m_items;
     BorderEdgePosition m_selectedPosition;
+    BorderGridViewMode m_viewMode;
+    uint16_t m_centerGroundItemId;
+
+    static const BorderGridCell s_edgeCells[9];
     
     DECLARE_EVENT_TABLE()
 };

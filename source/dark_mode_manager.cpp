@@ -149,6 +149,17 @@ void DarkModeManager::ApplyThemeToMainToolBar(MainToolBar* toolBar) {
     } catch (...) {
         // Ignore errors if unable to access this toolbar
     }
+
+    try {
+        wxAuiPaneInfo brushSizePane = toolBar->GetPane(TOOLBAR_BRUSH_SIZE);
+        if (wxAuiToolBar* tb = dynamic_cast<wxAuiToolBar*>(brushSizePane.window)) {
+            tb->SetBackgroundColour(GetBackgroundColor());
+            tb->SetForegroundColour(GetForegroundColor());
+            tb->Refresh();
+        }
+    } catch (...) {
+        // Ignore errors if unable to access this toolbar
+    }
 }
 
 void DarkModeManager::ApplyThemeToDialog(wxDialog* dialog) {

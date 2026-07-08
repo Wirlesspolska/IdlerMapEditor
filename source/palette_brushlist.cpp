@@ -2423,13 +2423,25 @@ int SeamlessGridPanel::GetSpriteIndexAt(int x, int y) const {
 	int col = logX / sprite_size;
 	int row = logY / sprite_size;
 	
-	// Calculate index
-	int index = row * columns + col;
-	
-	// Check if this is a valid index
-	if (index >= 0 && index < static_cast<int>(tileset->size()) && 
-		col >= 0 && col < columns) {
-		return index;
+	if (col < 0 || col >= columns || row < 0) {
+		return -1;
+	}
+
+	int local_index = row * columns + col;
+
+	if (tileset->size() > 10000) {
+		size_t chunk_start = current_chunk * chunk_size;
+		size_t items_in_chunk = std::min(static_cast<size_t>(chunk_size), tileset->size() - chunk_start);
+
+		if (local_index < 0 || local_index >= static_cast<int>(items_in_chunk)) {
+			return -1;
+		}
+
+		return static_cast<int>(chunk_start) + local_index;
+	}
+
+	if (local_index >= 0 && local_index < static_cast<int>(tileset->size())) {
+		return local_index;
 	}
 	
 	return -1;
@@ -2460,20 +2472,8 @@ void SeamlessGridPanel::OnMouseClick(wxMouseEvent& event) {
 		}
 		
 		if (index >= 0 && index < static_cast<int>(tileset->size())) {
-			selected_index = index;
-			Refresh();
-			
-			// Notify parent about the selection
-			wxWindow* w = this;
-			while((w = w->GetParent()) && dynamic_cast<PaletteWindow*>(w) == nullptr);
-			if(w) {
-				g_gui.ActivatePalette(static_cast<PaletteWindow*>(w));
-			}
-			
-			// Add to recent brushes list (this is a manual user selection)
 			g_gui.AddRecentBrush(tileset->brushlist[index]);
-			
-			g_gui.SelectBrush(tileset->brushlist[index], tileset->getType());
+			SelectIndex(index);
 		}
 	}
 	
@@ -2511,40 +2511,14 @@ bool SeamlessGridPanel::SelectBrush(const Brush* whatbrush) {
 	
 	for (size_t i = 0; i < tileset->size(); ++i) {
 		if (tileset->brushlist[i] == whatbrush) {
-			selected_index = i;
-			hover_index = -1;
-			Refresh();
-			
-			// Ensure the selected item is visible
-			int row = selected_index / columns;
-			int yPos = row * sprite_size;
-			
-			// Get the visible area
-			int xStart, yStart;
-			GetViewStart(&xStart, &yStart);
-			int ppuX, ppuY;
-			GetScrollPixelsPerUnit(&ppuX, &ppuY);
-			yStart *= ppuY;
-			
-			int clientHeight;
-			GetClientSize(nullptr, &clientHeight);
-			
-			// Scroll if necessary
-			if (yPos < yStart) {
-				Scroll(-1, yPos / ppuY);
-				UpdateViewableItems();
-			} else if (yPos + sprite_size > yStart + clientHeight) {
-				Scroll(-1, (yPos + sprite_size - clientHeight) / ppuY + 1);
-				UpdateViewableItems();
-			}
-			
+			SelectIndex(static_cast<int>(i), false);
 			return true;
 		}
 	}
 	return false;
 }
 
-void SeamlessGridPanel::SelectIndex(int index) {
+void SeamlessGridPanel::SelectIndex(int index, bool notify_gui) {
     if (!tileset || index < 0 || index >= static_cast<int>(tileset->size())) {
         return;
     }
@@ -2613,6 +2587,10 @@ void SeamlessGridPanel::SelectIndex(int index) {
     
     UpdateViewableItems();
     Refresh();
+
+    if (!notify_gui) {
+		return;
+	}
 
     // Notify parent about the selection
     wxWindow* w = this;

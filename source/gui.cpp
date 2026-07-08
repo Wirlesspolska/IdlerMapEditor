@@ -539,7 +539,7 @@ bool GUI::LoadDataFiles(wxString& error, wxArrayString& warnings) {
 
 	g_gui.gfx.client_version = getLoadedVersion();
 
-	if (!g_gui.gfx.loadOTFI(client_path.GetPath(wxPATH_GET_VOLUME | wxPATH_GET_SEPARATOR), error, warnings)) {
+	if (!g_gui.gfx.loadOTFI(client_path, data_path, error, warnings)) {
 		error = "Couldn't load otfi file: " + error;
 		g_gui.DestroyLoadBar();
 		UnloadVersion();

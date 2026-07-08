@@ -74,6 +74,7 @@ protected:
 	wxCheckBox* eraser_leave_unique_chkbox;
 	wxCheckBox* doodad_erase_same_chkbox;
 	wxCheckBox* auto_create_spawn_chkbox;
+	wxCheckBox* spawn_canonical_monster_names_chkbox;
 	wxCheckBox* allow_multiple_orderitems_chkbox;
 	wxCheckBox* merge_move_chkbox;
 	wxCheckBox* merge_paste_chkbox;

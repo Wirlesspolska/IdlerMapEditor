@@ -23,6 +23,7 @@
 #include "iomap_otmm.h"
 #include "filehandle.h"
 #include "map.h"
+#include "creatures.h"
 #include "gui.h"
 
 // ============================================================================
@@ -897,7 +898,7 @@ bool IOMapOTMM::saveMap(Map& map, NodeFileWriteHandle& f, const FileName& identi
 										if (c->isNpc()) {
 											f.addNode(OTMM_NPC);
 											{
-												f.addString(c->getName());
+												f.addString(getSpawnSaveCreatureName(c->getName(), c->isNpc()));
 												f.addU16(creature_tile->getX());
 												f.addU16(creature_tile->getY());
 												f.addU8(creature_tile->getZ() & 0xf);
@@ -906,7 +907,7 @@ bool IOMapOTMM::saveMap(Map& map, NodeFileWriteHandle& f, const FileName& identi
 										} else {
 											f.addNode(OTMM_MONSTER);
 											{
-												f.addString(c->getName());
+												f.addString(getSpawnSaveCreatureName(c->getName(), c->isNpc()));
 												f.addU32(c->getSpawnTime());
 												f.addU16(creature_tile->getX());
 												f.addU16(creature_tile->getY());

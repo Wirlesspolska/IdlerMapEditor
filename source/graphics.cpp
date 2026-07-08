@@ -27,6 +27,8 @@
 #include <wx/mstream.h>
 #include <wx/stopwatch.h>
 #include <wx/dir.h>
+#include <algorithm>
+#include <vector>
 #include "pngfiles.h"
 
 #include "../brushes/door_normal.xpm"
@@ -207,7 +209,10 @@ GraphicManager::~GraphicManager() {
 }
 
 bool GraphicManager::hasTransparency() const {
-	return has_transparency || g_settings.getBoolean(Config::SPRITE_TRANSPARENCY);
+	if (otfi_found) {
+		return has_transparency;
+	}
+	return g_settings.getBoolean(Config::SPRITE_TRANSPARENCY);
 }
 
 void GraphicManager::invalidateAllSpriteTextures() {
@@ -283,6 +288,47 @@ Sprite* GraphicManager::getSprite(int id) {
 		return it->second;
 	}
 	return nullptr;
+}
+
+uint8_t* GraphicManager::getSpriteRGBAData(int id) {
+	GameSprite* gameSprite = dynamic_cast<GameSprite*>(getSprite(id));
+	if (!gameSprite || gameSprite->spriteList.empty()) {
+		return nullptr;
+	}
+
+	gameSprite->spriteList[0]->ensureDataLoaded();
+	uint8_t* data = gameSprite->spriteList[0]->getRGBAData();
+	if (data) {
+		return data;
+	}
+
+	// Fallback for memcached sprites: render to a bitmap and read pixels back.
+	wxBitmap bitmap(SPRITE_PIXELS, SPRITE_PIXELS, 32);
+	wxMemoryDC memoryDC(bitmap);
+	memoryDC.SetBackground(wxBrush(wxColour(0, 0, 0)));
+	memoryDC.Clear();
+	gameSprite->DrawTo(&memoryDC, SPRITE_SIZE_32x32, 0, 0, SPRITE_PIXELS, SPRITE_PIXELS);
+	memoryDC.SelectObject(wxNullBitmap);
+
+	wxImage image = bitmap.ConvertToImage();
+	if (!image.IsOk()) {
+		return nullptr;
+	}
+	if (!image.HasAlpha()) {
+		image.InitAlpha();
+	}
+
+	uint8_t* rgba = newd uint8_t[SPRITE_PIXELS_SIZE * 4];
+	for (int y = 0; y < SPRITE_PIXELS; ++y) {
+		for (int x = 0; x < SPRITE_PIXELS; ++x) {
+			const int index = (y * SPRITE_PIXELS + x) * 4;
+			rgba[index + 0] = image.GetRed(x, y);
+			rgba[index + 1] = image.GetGreen(x, y);
+			rgba[index + 2] = image.GetBlue(x, y);
+			rgba[index + 3] = image.GetAlpha(x, y);
+		}
+	}
+	return rgba;
 }
 
 GameSprite* GraphicManager::getCreatureSprite(int id) {
@@ -483,20 +529,15 @@ bool GraphicManager::loadEditorSprites() {
 	return true;
 }
 
-bool GraphicManager::loadOTFI(const FileName& filename, wxString& error, wxArrayString& warnings) {
-	wxDir dir(filename.GetFullPath());
-	wxString otfi_file;
-
-	otfi_found = false;
-
-	if (dir.GetFirst(&otfi_file, "*.otfi", wxDIR_FILES)) {
-		wxFileName otfi(filename.GetFullPath(), otfi_file);
-		OTMLDocumentPtr doc = OTMLDocument::parse(otfi.GetFullPath().ToStdString());
+bool GraphicManager::applyOTFIFile(const wxFileName& otfiPath, wxArrayString& warnings) {
+	try {
+		OTMLDocumentPtr doc = OTMLDocument::parse(nstr(otfiPath.GetFullPath()));
 		if (doc->size() == 0 || !doc->hasChildAt("DatSpr")) {
-			error += "'DatSpr' tag not found";
+			warnings.Add("Invalid OTFI (missing DatSpr): " + otfiPath.GetFullPath());
 			return false;
 		}
 
+		const wxString assetDir = otfiPath.GetPath(wxPATH_GET_VOLUME | wxPATH_GET_SEPARATOR);
 		OTMLNodePtr node = doc->get("DatSpr");
 		is_extended = node->valueAt<bool>("extended");
 		has_transparency = node->valueAt<bool>("transparency");
@@ -504,20 +545,117 @@ bool GraphicManager::loadOTFI(const FileName& filename, wxString& error, wxArray
 		has_frame_groups = node->valueAt<bool>("frame-groups");
 		std::string metadata = node->valueAt<std::string>("metadata-file", std::string(ASSETS_NAME) + ".dat");
 		std::string sprites = node->valueAt<std::string>("sprites-file", std::string(ASSETS_NAME) + ".spr");
-		metadata_file = wxFileName(filename.GetFullPath(), wxString(metadata));
-		sprites_file = wxFileName(filename.GetFullPath(), wxString(sprites));
+
+		metadata_file = wxFileName(assetDir, wxString(metadata));
+		sprites_file = wxFileName(assetDir, wxString(sprites));
 		otfi_found = true;
+
+		// OTFI overrides the transparency preference when present.
+		g_settings.setInteger(Config::SPRITE_TRANSPARENCY, has_transparency ? 1 : 0);
+
+		warnings.Add(wxString::Format("Loaded OTFI '%s' (transparency: %s)",
+			otfiPath.GetFullPath(),
+			has_transparency ? wxString("enabled") : wxString("disabled")));
+		return true;
+	} catch (const OTMLException& ex) {
+		warnings.Add(wxString::Format("Failed to parse OTFI '%s': %s",
+			otfiPath.GetFullPath(), wxString(ex.what())));
+	} catch (const std::exception& ex) {
+		warnings.Add(wxString::Format("Failed to parse OTFI '%s': %s",
+			otfiPath.GetFullPath(), wxString(ex.what())));
+	} catch (...) {
+		warnings.Add("Failed to parse OTFI: " + otfiPath.GetFullPath());
+	}
+	return false;
+}
+
+bool GraphicManager::tryLoadOTFIInDirectory(const wxString& directory, wxArrayString& warnings) {
+	wxFileName dirName;
+	dirName.AssignDir(directory);
+	if (!dirName.DirExists()) {
+		return false;
 	}
 
-	if (!otfi_found) {
-		is_extended = false;
-		has_transparency = false;
-		has_frame_durations = false;
-		has_frame_groups = false;
-		metadata_file = wxFileName(filename.GetFullPath(), wxString(ASSETS_NAME) + ".dat");
-		sprites_file = wxFileName(filename.GetFullPath(), wxString(ASSETS_NAME) + ".spr");
+	const wxString dir = dirName.GetPath(wxPATH_GET_VOLUME | wxPATH_GET_SEPARATOR);
+
+	// Object Editor names OTFI after the .dat file (e.g. Tibia.dat -> Tibia.otfi).
+	wxDir datDir(dir);
+	wxString datFile;
+	if (datDir.GetFirst(&datFile, "*.dat", wxDIR_FILES)) {
+		do {
+			wxFileName datPath(dir, datFile);
+			wxFileName otfiPath(dir, datPath.GetName() + ".otfi");
+			if (otfiPath.FileExists() && applyOTFIFile(otfiPath, warnings)) {
+				return true;
+			}
+		} while (datDir.GetNext(&datFile));
 	}
 
+	wxDir otfiDir(dir);
+	wxString otfiFile;
+	if (otfiDir.GetFirst(&otfiFile, "*.otfi", wxDIR_FILES)) {
+		do {
+			wxFileName otfiPath(dir, otfiFile);
+			if (applyOTFIFile(otfiPath, warnings)) {
+				return true;
+			}
+		} while (otfiDir.GetNext(&otfiFile));
+	}
+
+	return false;
+}
+
+bool GraphicManager::loadOTFI(const FileName& clientPath, const FileName& dataPath, wxString& error, wxArrayString& warnings) {
+	(void)error;
+
+	otfi_found = false;
+	is_extended = false;
+	has_transparency = false;
+	has_frame_durations = false;
+	has_frame_groups = false;
+
+	std::vector<wxString> searchDirs;
+	auto addSearchDir = [&](const wxString& path) {
+		if (path.empty()) {
+			return;
+		}
+		wxFileName fn;
+		fn.AssignDir(path);
+		if (!fn.DirExists()) {
+			return;
+		}
+		const wxString normalized = fn.GetPath(wxPATH_GET_VOLUME | wxPATH_GET_SEPARATOR);
+		if (std::find(searchDirs.begin(), searchDirs.end(), normalized) == searchDirs.end()) {
+			searchDirs.push_back(normalized);
+		}
+	};
+
+	addSearchDir(clientPath.GetFullPath());
+	addSearchDir(clientPath.GetPath(wxPATH_GET_VOLUME | wxPATH_GET_SEPARATOR) + wxString("assets"));
+	addSearchDir(dataPath.GetFullPath());
+
+	const wxString clientFull = clientPath.GetFullPath();
+	const wxString assetsSuffix = wxString(wxFileName::GetPathSeparator()) + wxString("assets");
+	if (clientFull.Lower().EndsWith(assetsSuffix) || clientFull.Lower().EndsWith("/assets")) {
+		wxFileName parent(clientFull);
+		parent.RemoveLastDir();
+		addSearchDir(parent.GetPath(wxPATH_GET_VOLUME | wxPATH_GET_SEPARATOR));
+	}
+
+	for (const wxString& dir : searchDirs) {
+		if (tryLoadOTFIInDirectory(dir, warnings)) {
+			return true;
+		}
+	}
+
+	wxString fallbackDir = clientPath.GetPath(wxPATH_GET_VOLUME | wxPATH_GET_SEPARATOR);
+	if (fallbackDir.empty() || !wxDir::Exists(fallbackDir)) {
+		fallbackDir = dataPath.GetPath(wxPATH_GET_VOLUME | wxPATH_GET_SEPARATOR);
+	}
+
+	metadata_file = wxFileName(fallbackDir, wxString(ASSETS_NAME) + ".dat");
+	sprites_file = wxFileName(fallbackDir, wxString(ASSETS_NAME) + ".spr");
+	warnings.Add("No .otfi file found in client/data folders; using default Tibia.dat/.spr sprite flags.");
 	return true;
 }
 

@@ -202,6 +202,13 @@ NPCEntry* NPCManager::findByName(const std::string& name) const {
     if (it != npc_entries.end()) {
         return const_cast<NPCEntry*>(&it->second);
     }
+
+    const std::string lower_name = as_lower_str(name);
+    for (const auto& npc_entry : npc_entries) {
+        if (as_lower_str(npc_entry.first) == lower_name) {
+            return const_cast<NPCEntry*>(&npc_entry.second);
+        }
+    }
     return nullptr;
 }
 

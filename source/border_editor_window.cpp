@@ -38,6 +38,9 @@
 #include <wx/filepicker.h>
 #include <wx/textdlg.h>
 #include <algorithm>
+#include <cmath>
+#include <cstring>
+#include <numeric>
 #define BORDER_PREVIEW_SIZE 256
 #define BORDER_GRID_CELL_SIZE 96
 #define ID_BORDER_GRID_SELECT wxID_HIGHEST + 1
@@ -49,6 +52,907 @@
 #define ID_CREATE_TILESET wxID_HIGHEST + 7
 #define ID_TEST_BRUSH wxID_HIGHEST + 8
 #define ID_ZORDER_CHOICE wxID_HIGHEST + 9
+#define ID_BORDER_AUTOMATCH wxID_HIGHEST + 10
+
+namespace {
+
+constexpr int kBorderZoneCount = 9;
+constexpr int kBorderBand = 11;
+
+uint8_t g_edgeMasks[EDGE_COUNT][SPRITE_PIXELS_SIZE];
+bool g_edgeMasksReady = false;
+
+struct GroundReference {
+	bool valid = false;
+	uint8_t mask[SPRITE_PIXELS_SIZE] = {};
+	uint8_t r[SPRITE_PIXELS_SIZE] = {};
+	uint8_t g[SPRITE_PIXELS_SIZE] = {};
+	uint8_t b[SPRITE_PIXELS_SIZE] = {};
+} g_groundRef;
+
+constexpr int kGroundColorMatch = 36;
+
+bool isSpritePixelOpaque(uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
+	if (a < 32) {
+		return false;
+	}
+	if (r == 0xFF && g == 0x00 && b == 0xFF) {
+		return false;
+	}
+	return true;
+}
+
+uint8_t* loadItemSpriteRGBA(uint16_t itemId) {
+	const ItemType& type = g_items.getItemType(itemId);
+	if (type.id == 0) {
+		return nullptr;
+	}
+
+	return g_gui.gfx.getSpriteRGBAData(type.clientID);
+}
+
+bool loadGroundReference(uint16_t groundItemId) {
+	g_groundRef = GroundReference();
+	if (groundItemId == 0) {
+		return false;
+	}
+
+	uint8_t* rgba = loadItemSpriteRGBA(groundItemId);
+	if (!rgba) {
+		return false;
+	}
+
+	for (int y = 0; y < SPRITE_PIXELS; ++y) {
+		for (int x = 0; x < SPRITE_PIXELS; ++x) {
+			const int pixelIndex = (y * SPRITE_PIXELS + x) * 4;
+			const uint8_t pr = rgba[pixelIndex + 0];
+			const uint8_t pg = rgba[pixelIndex + 1];
+			const uint8_t pb = rgba[pixelIndex + 2];
+			const uint8_t pa = rgba[pixelIndex + 3];
+			if (!isSpritePixelOpaque(pr, pg, pb, pa)) {
+				continue;
+			}
+
+			const int maskIndex = y * SPRITE_PIXELS + x;
+			g_groundRef.mask[maskIndex] = 1;
+			g_groundRef.r[maskIndex] = pr;
+			g_groundRef.g[maskIndex] = pg;
+			g_groundRef.b[maskIndex] = pb;
+		}
+	}
+
+	delete[] rgba;
+	g_groundRef.valid = true;
+	return true;
+}
+
+bool pixelMatchesGround(uint8_t r, uint8_t g, uint8_t b, int maskIndex) {
+	if (!g_groundRef.valid || g_groundRef.mask[maskIndex] == 0) {
+		return false;
+	}
+	return std::abs(static_cast<int>(r) - g_groundRef.r[maskIndex]) <= kGroundColorMatch
+		&& std::abs(static_cast<int>(g) - g_groundRef.g[maskIndex]) <= kGroundColorMatch
+		&& std::abs(static_cast<int>(b) - g_groundRef.b[maskIndex]) <= kGroundColorMatch;
+}
+
+struct BorderSpriteAnalysis {
+	uint16_t itemId = 0;
+	double zoneDensity[kBorderZoneCount] = {};
+	double bandNorth = 0.0;
+	double bandSouth = 0.0;
+	double bandWest = 0.0;
+	double bandEast = 0.0;
+	double avgR = 0.0;
+	double avgG = 0.0;
+	double avgB = 0.0;
+	int opaqueCount = 0;
+	int contentCount = 0;
+	double fillRatio = 0.0;
+	double centerDensity = 0.0;
+	double diagonalTL = 0.0;
+	double diagonalTR = 0.0;
+	double diagonalBL = 0.0;
+	double diagonalBR = 0.0;
+	double cornerShapeTL = 0.0;
+	double cornerShapeTR = 0.0;
+	double cornerShapeBL = 0.0;
+	double cornerShapeBR = 0.0;
+	uint8_t contentMask[SPRITE_PIXELS_SIZE] = {};
+};
+
+void buildEdgeMask(BorderEdgePosition edge, uint8_t* mask) {
+	std::memset(mask, 0, SPRITE_PIXELS_SIZE);
+	const int B = kBorderBand;
+
+	for (int y = 0; y < SPRITE_PIXELS; ++y) {
+		for (int x = 0; x < SPRITE_PIXELS; ++x) {
+			bool inside = false;
+			switch (edge) {
+				case EDGE_N:
+					inside = (y < B);
+					break;
+				case EDGE_S:
+					inside = (y >= SPRITE_PIXELS - B);
+					break;
+				case EDGE_W:
+					inside = (x < B);
+					break;
+				case EDGE_E:
+					inside = (x >= SPRITE_PIXELS - B);
+					break;
+				case EDGE_CNW:
+					inside = (x < B * 2) && (y < B * 2) && (std::abs(x - y) <= 3);
+					break;
+				case EDGE_CNE: {
+					const int rx = SPRITE_PIXELS - 1 - x;
+					inside = (rx < B * 2) && (y < B * 2) && (std::abs(rx - y) <= 3);
+					break;
+				}
+				case EDGE_CSW: {
+					const int ry = SPRITE_PIXELS - 1 - y;
+					inside = (x < B * 2) && (ry < B * 2) && (std::abs(x - ry) <= 3);
+					break;
+				}
+				case EDGE_CSE: {
+					const int rx = SPRITE_PIXELS - 1 - x;
+					const int ry = SPRITE_PIXELS - 1 - y;
+					inside = (rx < B * 2) && (ry < B * 2) && (std::abs(rx - ry) <= 3);
+					break;
+				}
+				case EDGE_DNW:
+					inside = (y < B) || (x < B);
+					if ((x < B * 2) && (y < B * 2) && (std::abs(x - y) <= 3)) {
+						inside = false;
+					}
+					break;
+				case EDGE_DNE: {
+					const int rx = SPRITE_PIXELS - 1 - x;
+					inside = (y < B) || (x >= SPRITE_PIXELS - B);
+					if ((rx < B * 2) && (y < B * 2) && (std::abs(rx - y) <= 3)) {
+						inside = false;
+					}
+					break;
+				}
+				case EDGE_DSW: {
+					const int ry = SPRITE_PIXELS - 1 - y;
+					inside = (y >= SPRITE_PIXELS - B) || (x < B);
+					if ((x < B * 2) && (ry < B * 2) && (std::abs(x - ry) <= 3)) {
+						inside = false;
+					}
+					break;
+				}
+				case EDGE_DSE: {
+					const int rx = SPRITE_PIXELS - 1 - x;
+					const int ry = SPRITE_PIXELS - 1 - y;
+					inside = (y >= SPRITE_PIXELS - B) || (x >= SPRITE_PIXELS - B);
+					if ((rx < B * 2) && (ry < B * 2) && (std::abs(rx - ry) <= 3)) {
+						inside = false;
+					}
+					break;
+				}
+				default:
+					break;
+			}
+
+			if (inside) {
+				mask[y * SPRITE_PIXELS + x] = 1;
+			}
+		}
+	}
+}
+
+void ensureEdgeMasks() {
+	if (g_edgeMasksReady) {
+		return;
+	}
+
+	for (int edgeIndex = EDGE_N; edgeIndex < EDGE_COUNT; ++edgeIndex) {
+		buildEdgeMask(static_cast<BorderEdgePosition>(edgeIndex), g_edgeMasks[edgeIndex]);
+	}
+	g_edgeMasksReady = true;
+}
+
+double maskOverlayScore(const BorderSpriteAnalysis& sprite, const uint8_t* edgeMask) {
+	int overlap = 0;
+	for (int i = 0; i < SPRITE_PIXELS_SIZE; ++i) {
+		if (sprite.contentMask[i] != 0 && edgeMask[i] != 0) {
+			overlap++;
+		}
+	}
+	return static_cast<double>(overlap);
+}
+
+bool isBorderContentPixel(uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
+	if (!isSpritePixelOpaque(r, g, b, a)) {
+		return false;
+	}
+	// Ignore near-white export backgrounds that are not real transparency.
+	if (r > 235 && g > 235 && b > 235) {
+		return false;
+	}
+	return true;
+}
+
+bool analyzeBorderSprite(uint16_t itemId, BorderSpriteAnalysis& out, bool ignoreGroundSubtraction = false) {
+	uint8_t* rgba = loadItemSpriteRGBA(itemId);
+	if (!rgba) {
+		return false;
+	}
+
+	out = BorderSpriteAnalysis();
+	out.itemId = itemId;
+
+	const int zoneSize = SPRITE_PIXELS / 3;
+	const int bandSize = SPRITE_PIXELS / 3;
+	int zoneContent[kBorderZoneCount] = {};
+	int zoneTotal[kBorderZoneCount] = {};
+	int bandCounts[4] = {};
+	int diagTL = 0, diagTR = 0, diagBL = 0, diagBR = 0;
+	int cornerTL = 0, cornerTR = 0, cornerBL = 0, cornerBR = 0;
+	int armTopFromTL = 0, armLeftFromTL = 0;
+	int armTopFromTR = 0, armRightFromTR = 0;
+	int armBottomFromBL = 0, armLeftFromBL = 0;
+	int armBottomFromBR = 0, armRightFromBR = 0;
+
+	for (int y = 0; y < SPRITE_PIXELS; ++y) {
+		for (int x = 0; x < SPRITE_PIXELS; ++x) {
+			const int pixelIndex = (y * SPRITE_PIXELS + x) * 4;
+			const uint8_t r = rgba[pixelIndex + 0];
+			const uint8_t g = rgba[pixelIndex + 1];
+			const uint8_t b = rgba[pixelIndex + 2];
+			const uint8_t a = rgba[pixelIndex + 3];
+
+			const int zoneRow = y / zoneSize;
+			const int zoneCol = x / zoneSize;
+			const int zoneIndex = zoneRow * 3 + zoneCol;
+			zoneTotal[zoneIndex]++;
+
+			const bool opaque = isSpritePixelOpaque(r, g, b, a);
+			if (opaque) {
+				out.opaqueCount++;
+			}
+
+			if (!isBorderContentPixel(r, g, b, a)) {
+				continue;
+			}
+
+			const int maskIndex = y * SPRITE_PIXELS + x;
+			if (!ignoreGroundSubtraction && pixelMatchesGround(r, g, b, maskIndex)) {
+				continue;
+			}
+
+			zoneContent[zoneIndex]++;
+			out.contentMask[maskIndex] = 1;
+			out.contentCount++;
+			out.avgR += r;
+			out.avgG += g;
+			out.avgB += b;
+
+			if (y < bandSize) {
+				bandCounts[0]++;
+			}
+			if (y >= SPRITE_PIXELS - bandSize) {
+				bandCounts[1]++;
+			}
+			if (x < bandSize) {
+				bandCounts[2]++;
+			}
+			if (x >= SPRITE_PIXELS - bandSize) {
+				bandCounts[3]++;
+			}
+
+			const int localX = x % zoneSize;
+			const int localY = y % zoneSize;
+
+			if (zoneRow == 0 && zoneCol == 0) {
+				cornerTL++;
+				if (std::abs(localX - localY) <= 2) {
+					diagTL++;
+				}
+				if (localY <= 2) {
+					armTopFromTL++;
+				}
+				if (localX <= 2) {
+					armLeftFromTL++;
+				}
+			} else if (zoneRow == 0 && zoneCol == 2) {
+				cornerTR++;
+				if (std::abs((zoneSize - 1 - localX) - localY) <= 2) {
+					diagTR++;
+				}
+				if (localY <= 2) {
+					armTopFromTR++;
+				}
+				if (localX >= zoneSize - 3) {
+					armRightFromTR++;
+				}
+			} else if (zoneRow == 2 && zoneCol == 0) {
+				cornerBL++;
+				if (std::abs(localX - (zoneSize - 1 - localY)) <= 2) {
+					diagBL++;
+				}
+				if (localY >= zoneSize - 3) {
+					armBottomFromBL++;
+				}
+				if (localX <= 2) {
+					armLeftFromBL++;
+				}
+			} else if (zoneRow == 2 && zoneCol == 2) {
+				cornerBR++;
+				if (std::abs((zoneSize - 1 - localX) - (zoneSize - 1 - localY)) <= 2) {
+					diagBR++;
+				}
+				if (localY >= zoneSize - 3) {
+					armBottomFromBR++;
+				}
+				if (localX >= zoneSize - 3) {
+					armRightFromBR++;
+				}
+			}
+		}
+	}
+
+	delete[] rgba;
+
+	if (out.contentCount < 1) {
+		return false;
+	}
+
+	out.avgR /= out.contentCount;
+	out.avgG /= out.contentCount;
+	out.avgB /= out.contentCount;
+	out.fillRatio = static_cast<double>(out.contentCount) / SPRITE_PIXELS_SIZE;
+
+	for (int i = 0; i < kBorderZoneCount; ++i) {
+		if (zoneTotal[i] > 0) {
+			out.zoneDensity[i] = static_cast<double>(zoneContent[i]) / zoneTotal[i];
+		}
+	}
+
+	out.centerDensity = out.zoneDensity[4];
+	const int bandArea = bandSize * SPRITE_PIXELS;
+	out.bandNorth = static_cast<double>(bandCounts[0]) / bandArea;
+	out.bandSouth = static_cast<double>(bandCounts[1]) / bandArea;
+	out.bandWest = static_cast<double>(bandCounts[2]) / bandArea;
+	out.bandEast = static_cast<double>(bandCounts[3]) / bandArea;
+
+	out.diagonalTL = cornerTL > 0 ? static_cast<double>(diagTL) / cornerTL : 0.0;
+	out.diagonalTR = cornerTR > 0 ? static_cast<double>(diagTR) / cornerTR : 0.0;
+	out.diagonalBL = cornerBL > 0 ? static_cast<double>(diagBL) / cornerBL : 0.0;
+	out.diagonalBR = cornerBR > 0 ? static_cast<double>(diagBR) / cornerBR : 0.0;
+
+	out.cornerShapeTL = cornerTL > 0 ? static_cast<double>(armTopFromTL + armLeftFromTL) / (cornerTL * 2.0) : 0.0;
+	out.cornerShapeTR = cornerTR > 0 ? static_cast<double>(armTopFromTR + armRightFromTR) / (cornerTR * 2.0) : 0.0;
+	out.cornerShapeBL = cornerBL > 0 ? static_cast<double>(armBottomFromBL + armLeftFromBL) / (cornerBL * 2.0) : 0.0;
+	out.cornerShapeBR = cornerBR > 0 ? static_cast<double>(armBottomFromBR + armRightFromBR) / (cornerBR * 2.0) : 0.0;
+	return true;
+}
+
+bool isLikelyFullGroundTile(const BorderSpriteAnalysis& analysis) {
+	// Only reject obvious full ground fills, not partial border pieces.
+	return analysis.fillRatio > 0.72 && analysis.centerDensity > 0.65;
+}
+
+double edgeCoverageScore(const BorderSpriteAnalysis& analysis, BorderEdgePosition edge) {
+	ensureEdgeMasks();
+	return maskOverlayScore(analysis, g_edgeMasks[edge]);
+}
+
+struct ScoredCandidate {
+	BorderSpriteAnalysis analysis;
+	double edgeScores[EDGE_COUNT] = {};
+};
+
+void assignOverlayGroup(
+	const std::vector<const ScoredCandidate*>& pool,
+	const BorderEdgePosition* edges,
+	size_t edgeCount,
+	std::map<BorderEdgePosition, uint16_t>& outMatches) {
+	if (pool.empty() || edgeCount == 0) {
+		return;
+	}
+
+	// 4 sprites x 4 edges: brute-force best permutation (fixes n/s, w/e, dnw/dne swaps).
+	if (pool.size() == edgeCount) {
+		std::vector<size_t> perm(pool.size());
+		std::iota(perm.begin(), perm.end(), 0);
+
+		double bestTotal = -1.0;
+		std::vector<size_t> bestPerm = perm;
+		do {
+			double total = 0.0;
+			for (size_t edgeIndex = 0; edgeIndex < edgeCount; ++edgeIndex) {
+				total += pool[perm[edgeIndex]]->edgeScores[edges[edgeIndex]];
+			}
+			if (total > bestTotal) {
+				bestTotal = total;
+				bestPerm = perm;
+			}
+		} while (std::next_permutation(perm.begin(), perm.end()));
+
+		for (size_t edgeIndex = 0; edgeIndex < edgeCount; ++edgeIndex) {
+			outMatches[edges[edgeIndex]] = pool[bestPerm[edgeIndex]]->analysis.itemId;
+		}
+		return;
+	}
+
+	struct OverlayPair {
+		BorderEdgePosition edge;
+		uint16_t itemId;
+		double overlay;
+	};
+
+	std::vector<OverlayPair> pairs;
+	pairs.reserve(pool.size() * edgeCount);
+	for (const ScoredCandidate* candidate : pool) {
+		for (size_t edgeIndex = 0; edgeIndex < edgeCount; ++edgeIndex) {
+			const BorderEdgePosition edge = edges[edgeIndex];
+			pairs.push_back({
+				edge,
+				candidate->analysis.itemId,
+				candidate->edgeScores[edge],
+			});
+		}
+	}
+
+	std::sort(pairs.begin(), pairs.end(), [](const OverlayPair& a, const OverlayPair& b) {
+		return a.overlay > b.overlay;
+	});
+
+	std::set<BorderEdgePosition> usedEdges;
+	std::set<uint16_t> usedItems;
+	for (const OverlayPair& pair : pairs) {
+		if (usedEdges.count(pair.edge) != 0 || usedItems.count(pair.itemId) != 0) {
+			continue;
+		}
+		outMatches[pair.edge] = pair.itemId;
+		usedEdges.insert(pair.edge);
+		usedItems.insert(pair.itemId);
+	}
+
+	for (size_t edgeIndex = 0; edgeIndex < edgeCount; ++edgeIndex) {
+		const BorderEdgePosition edge = edges[edgeIndex];
+		if (usedEdges.count(edge) != 0) {
+			continue;
+		}
+
+		double bestOverlay = -1e9;
+		uint16_t bestItemId = 0;
+		for (const ScoredCandidate* candidate : pool) {
+			if (usedItems.count(candidate->analysis.itemId) != 0) {
+				continue;
+			}
+			if (candidate->edgeScores[edge] > bestOverlay) {
+				bestOverlay = candidate->edgeScores[edge];
+				bestItemId = candidate->analysis.itemId;
+			}
+		}
+
+		if (bestItemId != 0) {
+			outMatches[edge] = bestItemId;
+			usedEdges.insert(edge);
+			usedItems.insert(bestItemId);
+		}
+	}
+}
+
+enum SpriteTier {
+	TIER_CORNER = 0,
+	TIER_CARDINAL = 1,
+	TIER_DIAGONAL = 2,
+};
+
+SpriteTier tierForEdge(BorderEdgePosition edge) {
+	switch (edge) {
+		case EDGE_CNW:
+		case EDGE_CNE:
+		case EDGE_CSW:
+		case EDGE_CSE:
+			return TIER_CORNER;
+		case EDGE_DNW:
+		case EDGE_DNE:
+		case EDGE_DSW:
+		case EDGE_DSE:
+			return TIER_DIAGONAL;
+		default:
+			return TIER_CARDINAL;
+	}
+}
+
+SpriteTier classifySpriteTier(const ScoredCandidate& candidate) {
+	BorderEdgePosition bestEdge = EDGE_N;
+	double bestScore = -1.0;
+	for (int edgeIndex = EDGE_N; edgeIndex < EDGE_COUNT; ++edgeIndex) {
+		if (candidate.edgeScores[edgeIndex] > bestScore) {
+			bestScore = candidate.edgeScores[edgeIndex];
+			bestEdge = static_cast<BorderEdgePosition>(edgeIndex);
+		}
+	}
+	return tierForEdge(bestEdge);
+}
+
+void buildTierPools(
+	const std::vector<ScoredCandidate>& candidates,
+	std::vector<const ScoredCandidate*>& cornerPool,
+	std::vector<const ScoredCandidate*>& cardinalPool,
+	std::vector<const ScoredCandidate*>& diagonalPool) {
+	cornerPool.clear();
+	cardinalPool.clear();
+	diagonalPool.clear();
+
+	if (candidates.empty()) {
+		return;
+	}
+
+	std::vector<const ScoredCandidate*> sorted;
+	sorted.reserve(candidates.size());
+	for (const ScoredCandidate& candidate : candidates) {
+		sorted.push_back(&candidate);
+	}
+	std::sort(sorted.begin(), sorted.end(), [](const ScoredCandidate* a, const ScoredCandidate* b) {
+		return a->analysis.contentCount < b->analysis.contentCount;
+	});
+
+	if (sorted.size() >= 12) {
+		std::vector<const ScoredCandidate*> buckets[3];
+		for (const ScoredCandidate* candidate : sorted) {
+			buckets[classifySpriteTier(*candidate)].push_back(candidate);
+		}
+
+		const int targets[3] = {4, 4, 4};
+		auto countBucket = [&](int tier) {
+			return static_cast<int>(buckets[tier].size());
+		};
+		auto removeFromBucket = [&](int tier, const ScoredCandidate* candidate) {
+			auto& bucket = buckets[tier];
+			for (auto it = bucket.begin(); it != bucket.end(); ++it) {
+				if (*it == candidate) {
+					bucket.erase(it);
+					return;
+				}
+			}
+		};
+		auto bestEdgeScore = [](const ScoredCandidate& candidate, SpriteTier tier) {
+			double best = -1.0;
+			for (int edgeIndex = EDGE_N; edgeIndex < EDGE_COUNT; ++edgeIndex) {
+				const BorderEdgePosition edge = static_cast<BorderEdgePosition>(edgeIndex);
+				if (tierForEdge(edge) != tier) {
+					continue;
+				}
+				if (candidate.edgeScores[edgeIndex] > best) {
+					best = candidate.edgeScores[edgeIndex];
+				}
+			}
+			return best;
+		};
+
+		for (int safety = 0; safety < 48; ++safety) {
+			int overTier = -1;
+			int underTier = -1;
+			for (int tier = 0; tier < 3; ++tier) {
+				if (countBucket(tier) > targets[tier] && overTier == -1) {
+					overTier = tier;
+				}
+				if (countBucket(tier) < targets[tier] && underTier == -1) {
+					underTier = tier;
+				}
+			}
+			if (overTier == -1 || underTier == -1) {
+				break;
+			}
+
+			const ScoredCandidate* bestMove = nullptr;
+			double bestWeakness = -1.0;
+			for (const ScoredCandidate* candidate : buckets[overTier]) {
+				const double inTier = bestEdgeScore(*candidate, static_cast<SpriteTier>(overTier));
+				const double outTier = bestEdgeScore(*candidate, static_cast<SpriteTier>(underTier));
+				const double weakness = inTier - outTier;
+				if (bestMove == nullptr || weakness < bestWeakness) {
+					bestMove = candidate;
+					bestWeakness = weakness;
+				}
+			}
+			if (bestMove == nullptr) {
+				break;
+			}
+			removeFromBucket(overTier, bestMove);
+			buckets[underTier].push_back(bestMove);
+		}
+
+		cornerPool = buckets[TIER_CORNER];
+		cardinalPool = buckets[TIER_CARDINAL];
+		diagonalPool = buckets[TIER_DIAGONAL];
+		return;
+	}
+
+	std::vector<const ScoredCandidate*> buckets[3];
+	for (const ScoredCandidate* candidate : sorted) {
+		buckets[classifySpriteTier(*candidate)].push_back(candidate);
+	}
+
+	const size_t spriteCount = sorted.size();
+	const int targets[3] = {
+		spriteCount >= 12 ? 4 : static_cast<int>(spriteCount / 3),
+		spriteCount >= 12 ? 4 : static_cast<int>(spriteCount / 3),
+		spriteCount >= 12 ? 4 : static_cast<int>(spriteCount - 2 * (spriteCount / 3)),
+	};
+
+	auto countBucket = [&](int tier) {
+		return static_cast<int>(buckets[tier].size());
+	};
+
+	auto removeFromBucket = [&](int tier, const ScoredCandidate* candidate) {
+		auto& bucket = buckets[tier];
+		for (auto it = bucket.begin(); it != bucket.end(); ++it) {
+			if (*it == candidate) {
+				bucket.erase(it);
+				return;
+			}
+		}
+	};
+
+	auto bestEdgeScore = [](const ScoredCandidate& candidate, SpriteTier tier) {
+		double best = -1.0;
+		for (int edgeIndex = EDGE_N; edgeIndex < EDGE_COUNT; ++edgeIndex) {
+			const BorderEdgePosition edge = static_cast<BorderEdgePosition>(edgeIndex);
+			if (tierForEdge(edge) != tier) {
+				continue;
+			}
+			if (candidate.edgeScores[edgeIndex] > best) {
+				best = candidate.edgeScores[edgeIndex];
+			}
+		}
+		return best;
+	};
+
+	for (int safety = 0; safety < 48; ++safety) {
+		int overTier = -1;
+		int underTier = -1;
+		for (int tier = 0; tier < 3; ++tier) {
+			if (countBucket(tier) > targets[tier] && overTier == -1) {
+				overTier = tier;
+			}
+			if (countBucket(tier) < targets[tier] && underTier == -1) {
+				underTier = tier;
+			}
+		}
+
+		if (overTier == -1 || underTier == -1) {
+			break;
+		}
+
+		const ScoredCandidate* bestMove = nullptr;
+		double bestWeakness = -1.0;
+		for (const ScoredCandidate* candidate : buckets[overTier]) {
+			const double inTier = bestEdgeScore(*candidate, static_cast<SpriteTier>(overTier));
+			const double outTier = bestEdgeScore(*candidate, static_cast<SpriteTier>(underTier));
+			const double weakness = inTier - outTier;
+			if (bestMove == nullptr || weakness < bestWeakness) {
+				bestMove = candidate;
+				bestWeakness = weakness;
+			}
+		}
+
+		if (bestMove == nullptr) {
+			break;
+		}
+
+		removeFromBucket(overTier, bestMove);
+		buckets[underTier].push_back(bestMove);
+	}
+
+	cornerPool = buckets[TIER_CORNER];
+	cardinalPool = buckets[TIER_CARDINAL];
+	diagonalPool = buckets[TIER_DIAGONAL];
+}
+
+void fillRemainingMatches(
+	const std::vector<ScoredCandidate>& candidates,
+	int minItemId,
+	int maxItemId,
+	std::map<BorderEdgePosition, uint16_t>& outMatches) {
+	std::set<uint16_t> usedItems;
+	for (const auto& match : outMatches) {
+		usedItems.insert(match.second);
+	}
+
+	std::vector<ScoredCandidate> extraCandidates;
+	std::vector<const ScoredCandidate*> available;
+	available.reserve(candidates.size() + 4);
+	for (const ScoredCandidate& candidate : candidates) {
+		if (usedItems.count(candidate.analysis.itemId) == 0) {
+			available.push_back(&candidate);
+		}
+	}
+
+	for (int itemId = minItemId; itemId <= maxItemId; ++itemId) {
+		if (usedItems.count(static_cast<uint16_t>(itemId)) != 0) {
+			continue;
+		}
+		bool alreadyListed = false;
+		for (const ScoredCandidate* candidate : available) {
+			if (candidate->analysis.itemId == static_cast<uint16_t>(itemId)) {
+				alreadyListed = true;
+				break;
+			}
+		}
+		if (alreadyListed) {
+			continue;
+		}
+
+		ScoredCandidate scored;
+		if (!analyzeBorderSprite(static_cast<uint16_t>(itemId), scored.analysis, true)) {
+			continue;
+		}
+		for (int edgeIndex = EDGE_N; edgeIndex < EDGE_COUNT; ++edgeIndex) {
+			const BorderEdgePosition edge = static_cast<BorderEdgePosition>(edgeIndex);
+			scored.edgeScores[edgeIndex] = edgeCoverageScore(scored.analysis, edge);
+		}
+		extraCandidates.push_back(scored);
+		available.push_back(&extraCandidates.back());
+	}
+
+	std::vector<BorderEdgePosition> emptyEdges;
+	for (int edgeIndex = EDGE_N; edgeIndex < EDGE_COUNT; ++edgeIndex) {
+		const BorderEdgePosition edge = static_cast<BorderEdgePosition>(edgeIndex);
+		if (outMatches.count(edge) == 0) {
+			emptyEdges.push_back(edge);
+		}
+	}
+
+	if (emptyEdges.empty() || available.empty()) {
+		return;
+	}
+
+	if (emptyEdges.size() == available.size() && emptyEdges.size() <= 8) {
+		std::vector<size_t> perm(available.size());
+		std::iota(perm.begin(), perm.end(), 0);
+
+		double bestTotal = -1.0;
+		std::vector<size_t> bestPerm = perm;
+		do {
+			double total = 0.0;
+			for (size_t edgeIndex = 0; edgeIndex < emptyEdges.size(); ++edgeIndex) {
+				total += available[perm[edgeIndex]]->edgeScores[emptyEdges[edgeIndex]];
+			}
+			if (total > bestTotal) {
+				bestTotal = total;
+				bestPerm = perm;
+			}
+		} while (std::next_permutation(perm.begin(), perm.end()));
+
+		for (size_t edgeIndex = 0; edgeIndex < emptyEdges.size(); ++edgeIndex) {
+			outMatches[emptyEdges[edgeIndex]] = available[bestPerm[edgeIndex]]->analysis.itemId;
+		}
+		return;
+	}
+
+	std::set<BorderEdgePosition> filledEdges;
+	std::set<uint16_t> filledItems;
+	for (;;) {
+		BorderEdgePosition bestEdge = EDGE_NONE;
+		uint16_t bestItemId = 0;
+		double bestOverlay = -1.0;
+
+		for (const BorderEdgePosition edge : emptyEdges) {
+			if (filledEdges.count(edge) != 0) {
+				continue;
+			}
+			for (const ScoredCandidate* candidate : available) {
+				if (filledItems.count(candidate->analysis.itemId) != 0) {
+					continue;
+				}
+				const double overlay = candidate->edgeScores[edge];
+				if (overlay > bestOverlay) {
+					bestOverlay = overlay;
+					bestEdge = edge;
+					bestItemId = candidate->analysis.itemId;
+				}
+			}
+		}
+
+		if (bestEdge == EDGE_NONE || bestItemId == 0) {
+			break;
+		}
+
+		outMatches[bestEdge] = bestItemId;
+		filledEdges.insert(bestEdge);
+		filledItems.insert(bestItemId);
+	}
+}
+
+bool autoMatchBorderSprites(uint16_t seedItemId, int minItemId, int maxItemId, uint16_t groundItemId, std::map<BorderEdgePosition, uint16_t>& outMatches, wxString& summary) {
+	outMatches.clear();
+	(void)seedItemId;
+	g_edgeMasksReady = false;
+	loadGroundReference(groundItemId);
+
+	minItemId = std::max(1, minItemId);
+	maxItemId = std::min(65535, maxItemId);
+	if (minItemId > maxItemId) {
+		std::swap(minItemId, maxItemId);
+	}
+
+	std::vector<ScoredCandidate> candidates;
+	int skippedFullTiles = 0;
+
+	for (int itemId = minItemId; itemId <= maxItemId; ++itemId) {
+		ScoredCandidate scored;
+		if (!analyzeBorderSprite(static_cast<uint16_t>(itemId), scored.analysis)) {
+			if (!analyzeBorderSprite(static_cast<uint16_t>(itemId), scored.analysis, true)) {
+				continue;
+			}
+		}
+
+		if (isLikelyFullGroundTile(scored.analysis)) {
+			skippedFullTiles++;
+			continue;
+		}
+
+		for (int edgeIndex = EDGE_N; edgeIndex < EDGE_COUNT; ++edgeIndex) {
+			const BorderEdgePosition edge = static_cast<BorderEdgePosition>(edgeIndex);
+			scored.edgeScores[edgeIndex] = edgeCoverageScore(scored.analysis, edge);
+		}
+
+		candidates.push_back(scored);
+	}
+
+	if (candidates.empty()) {
+		summary = wxString::Format(
+			"No border-like sprites found in IDs %d to %d (%d full-tile sprites skipped).",
+			minItemId, maxItemId, skippedFullTiles);
+		return false;
+	}
+
+	static const BorderEdgePosition kCornerEdges[] = {
+		EDGE_CNW, EDGE_CNE, EDGE_CSW, EDGE_CSE,
+	};
+	static const BorderEdgePosition kCardinalEdges[] = {
+		EDGE_N, EDGE_S, EDGE_E, EDGE_W,
+	};
+	static const BorderEdgePosition kDiagonalEdges[] = {
+		EDGE_DNW, EDGE_DNE, EDGE_DSW, EDGE_DSE,
+	};
+
+	std::vector<const ScoredCandidate*> cornerPool;
+	std::vector<const ScoredCandidate*> cardinalPool;
+	std::vector<const ScoredCandidate*> diagonalPool;
+	buildTierPools(candidates, cornerPool, cardinalPool, diagonalPool);
+
+	assignOverlayGroup(cornerPool, kCornerEdges, sizeof(kCornerEdges) / sizeof(kCornerEdges[0]), outMatches);
+	assignOverlayGroup(cardinalPool, kCardinalEdges, sizeof(kCardinalEdges) / sizeof(kCardinalEdges[0]), outMatches);
+	assignOverlayGroup(diagonalPool, kDiagonalEdges, sizeof(kDiagonalEdges) / sizeof(kDiagonalEdges[0]), outMatches);
+	fillRemainingMatches(candidates, minItemId, maxItemId, outMatches);
+
+	if (outMatches.empty()) {
+		summary = "No border matches found after mask overlay scoring.";
+		return false;
+	}
+
+	const int expectedEdges = EDGE_COUNT - EDGE_N;
+	if (outMatches.size() < static_cast<size_t>(expectedEdges)) {
+		wxString missing;
+		for (int edgeIndex = EDGE_N; edgeIndex < EDGE_COUNT; ++edgeIndex) {
+			const BorderEdgePosition edge = static_cast<BorderEdgePosition>(edgeIndex);
+			if (outMatches.count(edge) == 0) {
+				if (!missing.IsEmpty()) {
+					missing += ", ";
+				}
+				missing += wxstr(edgePositionToString(edge));
+			}
+		}
+		summary = wxString::Format(
+			"Auto-matched %zu/%d border pieces (corner/cardinal/diagonal tiers + overlay) in IDs %d to %d (%d full tiles skipped). Still empty: %s",
+			outMatches.size(), expectedEdges, minItemId, maxItemId, skippedFullTiles, missing);
+	} else {
+		summary = wxString::Format(
+			"Auto-matched %zu/%d border pieces (corner/cardinal/diagonal tiers + overlay) in IDs %d to %d (%d full tiles skipped).",
+			outMatches.size(), expectedEdges, minItemId, maxItemId, skippedFullTiles);
+	}
+	return true;
+}
+
+} // namespace
 
 const BorderGridCell BorderGridPanel::s_edgeCells[9] = {
     BorderGridCell(EDGE_CNW, EDGE_DNW),
@@ -191,10 +1095,10 @@ BEGIN_EVENT_TABLE(BorderEditorDialog, wxDialog)
     EVT_BUTTON(wxID_REMOVE, BorderEditorDialog::OnRemoveGroundItem)
     EVT_BUTTON(wxID_FIND + 100, BorderEditorDialog::OnGroundBrowse)
     EVT_COMBOBOX(wxID_ANY + 100, BorderEditorDialog::OnLoadGroundBrush)
-    EVT_NOTEBOOK_PAGE_CHANGED(ID_GRID_VIEW_NOTEBOOK, BorderEditorDialog::OnGridViewChanged)
     EVT_BUTTON(ID_CREATE_TILESET, BorderEditorDialog::OnCreateTileset)
     EVT_BUTTON(ID_TEST_BRUSH, BorderEditorDialog::OnTestBrush)
     EVT_CHOICE(ID_ZORDER_CHOICE, BorderEditorDialog::OnZOrderChoice)
+    EVT_BUTTON(ID_BORDER_AUTOMATCH, BorderEditorDialog::OnAutoMatch)
 END_EVENT_TABLE()
 
 // Event table for BorderItemButton
@@ -220,7 +1124,8 @@ BorderEditorDialog::BorderEditorDialog(wxWindow* parent, const wxString& title) 
     m_nextBorderId(1),
     m_activeTab(0),
     m_borderItemPicker(nullptr),
-    m_gridViewNotebook(nullptr),
+    m_automatchFromSpin(nullptr),
+    m_automatchToSpin(nullptr),
     m_serverLookPicker(nullptr),
     m_zOrderChoice(nullptr),
     m_groundItemPicker(nullptr),
@@ -322,21 +1227,15 @@ void BorderEditorDialog::CreateGUIControls() {
     // Border content area with grid and preview
     wxBoxSizer* borderContentSizer = new wxBoxSizer(wxHORIZONTAL);
     
-    // Left side - Grid Editor with view mode tabs
-    wxStaticBoxSizer* gridSizer = new wxStaticBoxSizer(wxVERTICAL, m_borderPanel, "Border Grid");
-    m_gridViewNotebook = new wxNotebook(m_borderPanel, ID_GRID_VIEW_NOTEBOOK);
-    m_gridViewNotebook->AddPage(new wxPanel(m_gridViewNotebook), "9-Tile Edges");
-    m_gridViewNotebook->AddPage(new wxPanel(m_gridViewNotebook), "Map Preview");
-    m_gridViewNotebook->AddPage(new wxPanel(m_gridViewNotebook), "Outer");
-    m_gridViewNotebook->AddPage(new wxPanel(m_gridViewNotebook), "Inner");
-    gridSizer->Add(m_gridViewNotebook, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, 5);
+    // Left side - 9-tile edge grid editor
+    wxStaticBoxSizer* gridSizer = new wxStaticBoxSizer(wxVERTICAL, m_borderPanel, "Border Grid (9-Tile Edges)");
 
     m_gridPanel = new BorderGridPanel(m_borderPanel);
     m_gridPanel->SetMinSize(wxSize(320, 320));
     gridSizer->Add(m_gridPanel, 1, wxEXPAND | wxALL, 5);
     
     wxStaticText* instructions = new wxStaticText(m_borderPanel, wxID_ANY, 
-        "Click a grid cell to assign the current brush/item. Corner cells hold two edge types (corner + diagonal).");
+        "Click a grid cell to assign the current brush/item, or use Auto Match to fill edges by sprite shape overlay.");
     instructions->SetForegroundColour(*wxBLUE);
     gridSizer->Add(instructions, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 5);
     
@@ -347,14 +1246,28 @@ void BorderEditorDialog::CreateGUIControls() {
     itemSizer->Add(m_borderItemPicker, 0, wxRIGHT, 5);
     itemSizer->Add(new wxStaticText(m_borderPanel, wxID_ANY, "Item ID:"), 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 5);
     m_itemIdCtrl = new wxSpinCtrl(m_borderPanel, wxID_ANY, "0", wxDefaultPosition, wxSize(90, -1), wxSP_ARROW_KEYS, 0, 65535);
-    m_itemIdCtrl->SetToolTip("Enter an item ID manually or click the sprite to use the current brush");
+    m_itemIdCtrl->SetToolTip("Reference item ID for color tie-breaking during Auto Match");
     itemSizer->Add(m_itemIdCtrl, 0, wxRIGHT, 5);
     wxButton* browseButton = new wxButton(m_borderPanel, wxID_FIND, "Browse...", wxDefaultPosition, wxDefaultSize, wxBU_EXACTFIT);
     browseButton->SetToolTip("Browse for an item");
     itemSizer->Add(browseButton, 0, wxRIGHT, 5);
     wxButton* addButton = new wxButton(m_borderPanel, wxID_ADD, "Apply", wxDefaultPosition, wxDefaultSize, wxBU_EXACTFIT);
     addButton->SetToolTip("Apply the item ID to the selected grid cell");
-    itemSizer->Add(addButton, 0);
+    itemSizer->Add(addButton, 0, wxRIGHT, 8);
+
+    itemSizer->Add(new wxStaticText(m_borderPanel, wxID_ANY, "From ID:"), 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 4);
+    m_automatchFromSpin = new wxSpinCtrl(m_borderPanel, wxID_ANY, "434", wxDefaultPosition, wxSize(70, -1), wxSP_ARROW_KEYS, 0, 65535, 434);
+    m_automatchFromSpin->SetToolTip("First item ID to scan (inclusive)");
+    itemSizer->Add(m_automatchFromSpin, 0, wxRIGHT, 5);
+
+    itemSizer->Add(new wxStaticText(m_borderPanel, wxID_ANY, "To ID:"), 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 4);
+    m_automatchToSpin = new wxSpinCtrl(m_borderPanel, wxID_ANY, "445", wxDefaultPosition, wxSize(70, -1), wxSP_ARROW_KEYS, 0, 65535, 445);
+    m_automatchToSpin->SetToolTip("Last item ID to scan (inclusive)");
+    itemSizer->Add(m_automatchToSpin, 0, wxRIGHT, 5);
+
+    wxButton* autoMatchButton = new wxButton(m_borderPanel, ID_BORDER_AUTOMATCH, "Auto Match", wxDefaultPosition, wxDefaultSize, wxBU_EXACTFIT);
+    autoMatchButton->SetToolTip("Scan the ID range: bucket sprites by pixel count (corners/cardinals/diagonals), then overlay-match within each group of 4.");
+    itemSizer->Add(autoMatchButton, 0);
     gridSizer->Add(itemSizer, 0, wxEXPAND | wxALL, 5);
     
     m_borderItemPicker->Connect(wxEVT_LEFT_DOWN, wxMouseEventHandler(BorderEditorDialog::OnBorderItemPickerClick), nullptr, this);
@@ -636,20 +1549,6 @@ void BorderEditorDialog::AutoLoadDemoBorder() {
             LoadBorderById(2);
             return;
         }
-    }
-}
-
-void BorderEditorDialog::OnGridViewChanged(wxBookCtrlEvent& event) {
-    if (!m_gridPanel) {
-        return;
-    }
-
-    switch (event.GetSelection()) {
-        case 0: m_gridPanel->SetViewMode(GRID_VIEW_EDGES); break;
-        case 1: m_gridPanel->SetViewMode(GRID_VIEW_MAP); break;
-        case 2: m_gridPanel->SetViewMode(GRID_VIEW_OUTER); break;
-        case 3: m_gridPanel->SetViewMode(GRID_VIEW_INNER); break;
-        default: break;
     }
 }
 
@@ -1221,6 +2120,53 @@ void BorderEditorDialog::UpdatePreview() {
     m_gridPanel->Refresh();
 }
 
+void BorderEditorDialog::ApplyAutoMatchedBorders(const std::map<BorderEdgePosition, uint16_t>& matches) {
+    m_borderItems.clear();
+    m_gridPanel->Clear();
+
+    for (const auto& match : matches) {
+        m_borderItems.push_back(BorderItem(match.first, match.second));
+        m_gridPanel->SetItemId(match.first, match.second);
+    }
+
+    UpdatePreview();
+}
+
+void BorderEditorDialog::OnAutoMatch(wxCommandEvent& event) {
+    const uint16_t seedItemId = static_cast<uint16_t>(m_itemIdCtrl->GetValue());
+    const int fromId = m_automatchFromSpin->GetValue();
+    const int toId = m_automatchToSpin->GetValue();
+
+    uint16_t groundItemId = 0;
+    if (!m_groundItems.empty()) {
+        groundItemId = m_groundItems.front().itemId;
+    } else {
+        Brush* grassBrush = g_brushes.getBrush("grass");
+        if (grassBrush) {
+            GroundBrush* groundBrush = grassBrush->asGround();
+            if (groundBrush) {
+                groundItemId = groundBrush->getDefaultGroundItemId();
+            }
+        }
+    }
+
+    std::map<BorderEdgePosition, uint16_t> matches;
+    wxString summary;
+    if (!autoMatchBorderSprites(seedItemId, fromId, toId, groundItemId, matches, summary)) {
+        wxMessageBox(summary, "Auto Match", wxICON_INFORMATION);
+        return;
+    }
+
+    ApplyAutoMatchedBorders(matches);
+
+    wxString details = summary + "\n\n";
+    for (const auto& match : matches) {
+        details += wxString::Format("%s -> %u\n", wxstr(edgePositionToString(match.first)), match.second);
+    }
+
+    wxMessageBox(details, "Auto Match", wxICON_INFORMATION);
+}
+
 bool BorderEditorDialog::ValidateBorder() {
     // Check for empty name
     if (m_nameCtrl->GetValue().IsEmpty()) {
@@ -1504,6 +2450,24 @@ void BorderGridPanel::SetSelectedPosition(BorderEdgePosition pos) {
     Refresh();
 }
 
+wxRect BorderGridPanel::GetDualCellPrimaryZone(const wxRect& cellRect) const {
+    return wxRect(cellRect.x, cellRect.y, cellRect.width / 2, cellRect.height);
+}
+
+wxRect BorderGridPanel::GetDualCellSecondaryZone(const wxRect& cellRect) const {
+    return wxRect(cellRect.x + cellRect.width / 2, cellRect.y, cellRect.width - cellRect.width / 2, cellRect.height);
+}
+
+wxRect BorderGridPanel::GetSingleCellSpriteZone(const wxRect& cellRect) const {
+    constexpr int labelHeight = 14;
+    constexpr int padding = 4;
+    return wxRect(
+        cellRect.x + padding,
+        cellRect.y + labelHeight + 2,
+        cellRect.width - padding * 2,
+        cellRect.height - labelHeight - padding - 2);
+}
+
 void BorderGridPanel::GetEdgeCellRect(int col, int row, const wxRect& panelRect, wxRect& out) const {
     const int cell = std::min(panelRect.width, panelRect.height) / 3;
     const int offsetX = panelRect.x + (panelRect.width - cell * 3) / 2;
@@ -1511,7 +2475,7 @@ void BorderGridPanel::GetEdgeCellRect(int col, int row, const wxRect& panelRect,
     out = wxRect(offsetX + col * cell, offsetY + row * cell, cell, cell);
 }
 
-void BorderGridPanel::DrawSpriteForItem(wxDC& dc, uint16_t itemId, int x, int y, int w, int h) {
+void BorderGridPanel::DrawSpriteForItem(wxDC& dc, uint16_t itemId, int x, int y, int w, int h) const {
     if (itemId == 0) {
         return;
     }
@@ -1522,6 +2486,30 @@ void BorderGridPanel::DrawSpriteForItem(wxDC& dc, uint16_t itemId, int x, int y,
     Sprite* sprite = g_gui.gfx.getSprite(type.clientID);
     if (sprite) {
         sprite->DrawTo(&dc, SPRITE_SIZE_32x32, x, y, w, h);
+    }
+}
+
+void BorderGridPanel::DrawEdgeZone(wxDC& dc, BorderEdgePosition pos, const wxRect& zone) {
+    if (pos == EDGE_NONE) {
+        return;
+    }
+
+    if (pos == m_selectedPosition) {
+        dc.SetPen(*wxRED_PEN);
+        dc.SetBrush(wxBrush(wxColour(255, 220, 220)));
+        dc.DrawRectangle(zone);
+        dc.SetPen(wxPen(wxColour(90, 90, 90)));
+        dc.SetBrush(*wxTRANSPARENT_BRUSH);
+    }
+
+    dc.DrawText(wxstr(edgePositionToString(pos)), zone.x + 4, zone.y + 2);
+
+    constexpr int labelHeight = 14;
+    constexpr int padding = 4;
+    const int spriteY = zone.y + labelHeight + 2;
+    const int spriteH = zone.height - labelHeight - padding - 2;
+    if (spriteH > 0) {
+        DrawSpriteForItem(dc, GetItemId(pos), zone.x + padding, spriteY, zone.width - padding * 2, spriteH);
     }
 }
 
@@ -1549,38 +2537,23 @@ void BorderGridPanel::DrawEdgeLayout(wxDC& dc, const wxRect& rect) {
                 continue;
             }
 
-            auto drawEdge = [&](BorderEdgePosition pos, int insetX, int insetY, int drawW, int drawH) {
-                if (pos == EDGE_NONE) {
-                    return;
-                }
-                if (pos == m_selectedPosition) {
-                    dc.SetPen(*wxRED_PEN);
-                    dc.SetBrush(wxBrush(wxColour(255, 220, 220)));
-                    dc.DrawRectangle(cellRect);
-                    dc.SetPen(wxPen(wxColour(90, 90, 90)));
-                    dc.SetBrush(*wxTRANSPARENT_BRUSH);
-                }
-                wxString label = wxstr(edgePositionToString(pos));
-                dc.DrawText(label, cellRect.x + 4, cellRect.y + 4);
-                DrawSpriteForItem(dc, GetItemId(pos), cellRect.x + insetX, cellRect.y + insetY, drawW, drawH);
-            };
-
             if (cell.secondary != EDGE_NONE) {
-                const int halfW = cellRect.width / 2 - 4;
-                const int halfH = cellRect.height / 2 - 4;
-                drawEdge(cell.primary, 4, cellRect.height / 2, halfW, halfH);
-                if (cell.secondary == m_selectedPosition) {
+                const wxRect primaryZone = GetDualCellPrimaryZone(cellRect);
+                const wxRect secondaryZone = GetDualCellSecondaryZone(cellRect);
+                dc.DrawLine(primaryZone.GetRight(), cellRect.y, primaryZone.GetRight(), cellRect.GetBottom());
+                DrawEdgeZone(dc, cell.primary, primaryZone);
+                DrawEdgeZone(dc, cell.secondary, secondaryZone);
+            } else {
+                const wxRect spriteZone = GetSingleCellSpriteZone(cellRect);
+                if (cell.primary == m_selectedPosition) {
                     dc.SetPen(*wxRED_PEN);
                     dc.SetBrush(wxBrush(wxColour(255, 220, 220)));
-                    dc.DrawRectangle(cellRect);
+                    dc.DrawRectangle(spriteZone);
                     dc.SetPen(wxPen(wxColour(90, 90, 90)));
                     dc.SetBrush(*wxTRANSPARENT_BRUSH);
                 }
-                wxString label2 = wxstr(edgePositionToString(cell.secondary));
-                dc.DrawText(label2, cellRect.x + cellRect.width / 2 + 2, cellRect.y + 4);
-                DrawSpriteForItem(dc, GetItemId(cell.secondary), cellRect.x + cellRect.width / 2, cellRect.y + 4, halfW, halfH);
-            } else {
-                drawEdge(cell.primary, 8, 16, cellRect.width - 16, cellRect.height - 24);
+                dc.DrawText(wxstr(edgePositionToString(cell.primary)), cellRect.x + 4, cellRect.y + 2);
+                DrawSpriteForItem(dc, GetItemId(cell.primary), spriteZone.x, spriteZone.y, spriteZone.width, spriteZone.height);
             }
         }
     }
@@ -1610,22 +2583,59 @@ void BorderGridPanel::DrawMapPreview(wxDC& dc, const wxRect& rect, bool innerSty
         dc.DrawRectangle(centerX, centerY, cell, cell);
     }
 
-    auto drawBorderAt = [&](BorderEdgePosition pos, int dx, int dy) {
-        uint16_t itemId = GetItemId(pos);
-        if (itemId == 0) {
-            return;
+    struct TileOffset {
+        int dx;
+        int dy;
+        bool operator<(const TileOffset& other) const {
+            if (dx != other.dx) return dx < other.dx;
+            return dy < other.dy;
         }
-        DrawSpriteForItem(dc, itemId, centerX + dx * cell, centerY + dy * cell, cell, cell);
     };
 
-    drawBorderAt(EDGE_N, 0, -1);
-    drawBorderAt(EDGE_S, 0, 1);
-    drawBorderAt(EDGE_E, 1, 0);
-    drawBorderAt(EDGE_W, -1, 0);
-    drawBorderAt(EDGE_CNW, -1, -1);
-    drawBorderAt(EDGE_CNE, 1, -1);
-    drawBorderAt(EDGE_CSW, -1, 1);
-    drawBorderAt(EDGE_CSE, 1, 1);
+    std::map<TileOffset, std::vector<BorderEdgePosition>> tilePositions;
+    const BorderEdgePosition positions[] = {
+        EDGE_N, EDGE_S, EDGE_E, EDGE_W,
+        EDGE_CNW, EDGE_CNE, EDGE_CSW, EDGE_CSE,
+        EDGE_DNW, EDGE_DNE, EDGE_DSW, EDGE_DSE
+    };
+
+    for (BorderEdgePosition pos : positions) {
+        if (GetItemId(pos) == 0) {
+            continue;
+        }
+        TileOffset offset {0, 0};
+        switch (pos) {
+            case EDGE_N:   offset = {0, -1}; break;
+            case EDGE_E:   offset = {1, 0}; break;
+            case EDGE_S:   offset = {0, 1}; break;
+            case EDGE_W:   offset = {-1, 0}; break;
+            case EDGE_CNW: offset = {-1, -1}; break;
+            case EDGE_CNE: offset = {1, -1}; break;
+            case EDGE_CSE: offset = {1, 1}; break;
+            case EDGE_CSW: offset = {-1, 1}; break;
+            case EDGE_DNW: offset = {-1, -1}; break;
+            case EDGE_DNE: offset = {1, -1}; break;
+            case EDGE_DSE: offset = {1, 1}; break;
+            case EDGE_DSW: offset = {-1, 1}; break;
+            default: continue;
+        }
+        tilePositions[offset].push_back(pos);
+    }
+
+    for (const auto& tileEntry : tilePositions) {
+        const int x = centerX + tileEntry.first.dx * cell;
+        const int y = centerY + tileEntry.first.dy * cell;
+        const auto& edges = tileEntry.second;
+
+        if (edges.size() == 1) {
+            DrawSpriteForItem(dc, GetItemId(edges.front()), x, y, cell, cell);
+        } else {
+            const int halfW = cell / 2;
+            for (size_t i = 0; i < edges.size() && i < 2; ++i) {
+                DrawSpriteForItem(dc, GetItemId(edges[i]), x + static_cast<int>(i) * halfW, y, halfW, cell);
+            }
+        }
+    }
 
     dc.SetTextForeground(innerStyle ? wxColour(40, 80, 140) : wxColour(40, 100, 40));
     dc.DrawText(innerStyle ? "Inner preview" : "Outer preview", rect.x + 8, rect.y + 8);
@@ -1665,8 +2675,15 @@ BorderEdgePosition BorderGridPanel::HitTestEdgeCell(int x, int y, const wxRect& 
 
             const BorderGridCell& cell = s_edgeCells[row * 3 + col];
             if (cell.secondary != EDGE_NONE) {
-                wxRect rightHalf(cellRect.x + cellRect.width / 2, cellRect.y, cellRect.width / 2, cellRect.height);
-                return rightHalf.Contains(x, y) ? cell.secondary : cell.primary;
+                const wxRect primaryZone = GetDualCellPrimaryZone(cellRect);
+                const wxRect secondaryZone = GetDualCellSecondaryZone(cellRect);
+                if (primaryZone.Contains(x, y)) {
+                    return cell.primary;
+                }
+                if (secondaryZone.Contains(x, y)) {
+                    return cell.secondary;
+                }
+                return cell.primary;
             }
             if (cell.primary != EDGE_NONE) {
                 return cell.primary;
@@ -1778,10 +2795,10 @@ void BorderPreviewPanel::OnPaint(wxPaintEvent& event) {
     dc.DrawRectangle((GRID_SIZE / 2) * preview_cell_size, (GRID_SIZE / 2) * preview_cell_size, preview_cell_size, preview_cell_size);
     
     // Draw border items around the center
+    std::map<std::pair<int, int>, std::vector<const BorderItem*>> tileItems;
     for (const BorderItem& item : m_borderItems) {
         wxPoint offset(0, 0);
-        
-        // Calculate position based on the edge type
+
         switch (item.position) {
             case EDGE_N:   offset = wxPoint(0, -1); break;
             case EDGE_E:   offset = wxPoint(1, 0); break;
@@ -1791,23 +2808,40 @@ void BorderPreviewPanel::OnPaint(wxPaintEvent& event) {
             case EDGE_CNE: offset = wxPoint(1, -1); break;
             case EDGE_CSE: offset = wxPoint(1, 1); break;
             case EDGE_CSW: offset = wxPoint(-1, 1); break;
-            case EDGE_DNW: offset = wxPoint(-1, -1); break; // Diagonal positions use same offsets as corners
+            case EDGE_DNW: offset = wxPoint(-1, -1); break;
             case EDGE_DNE: offset = wxPoint(1, -1); break;
             case EDGE_DSE: offset = wxPoint(1, 1); break;
             case EDGE_DSW: offset = wxPoint(-1, 1); break;
             default: continue;
         }
-        
-        // Calculate the position on the grid
-        int x = (GRID_SIZE / 2 + offset.x) * preview_cell_size;
-        int y = (GRID_SIZE / 2 + offset.y) * preview_cell_size;
-        
-        // Draw the item sprite
-        const ItemType& type = g_items.getItemType(item.itemId);
-        if (type.id != 0) {
+
+        tileItems[{offset.x, offset.y}].push_back(&item);
+    }
+
+    for (const auto& tileEntry : tileItems) {
+        const int offsetX = tileEntry.first.first;
+        const int offsetY = tileEntry.first.second;
+        const int x = (GRID_SIZE / 2 + offsetX) * preview_cell_size;
+        const int y = (GRID_SIZE / 2 + offsetY) * preview_cell_size;
+        const auto& items = tileEntry.second;
+
+        auto drawItemSprite = [&](const BorderItem* borderItem, int drawX, int drawY, int drawW, int drawH) {
+            const ItemType& type = g_items.getItemType(borderItem->itemId);
+            if (type.id == 0) {
+                return;
+            }
             Sprite* sprite = g_gui.gfx.getSprite(type.clientID);
             if (sprite) {
-                sprite->DrawTo(&dc, SPRITE_SIZE_32x32, x, y, preview_cell_size, preview_cell_size);
+                sprite->DrawTo(&dc, SPRITE_SIZE_32x32, drawX, drawY, drawW, drawH);
+            }
+        };
+
+        if (items.size() == 1) {
+            drawItemSprite(items.front(), x, y, preview_cell_size, preview_cell_size);
+        } else {
+            const int halfW = preview_cell_size / 2;
+            for (size_t i = 0; i < items.size() && i < 2; ++i) {
+                drawItemSprite(items[i], x + static_cast<int>(i) * halfW, y, halfW, preview_cell_size);
             }
         }
     }

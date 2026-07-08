@@ -256,6 +256,11 @@ wxNotebookPage* PreferencesWindow::CreateEditorPage() {
 	auto_create_spawn_chkbox->SetToolTip("When this option is checked, you can place creatures without placing a spawn manually, the spawn will be place automatically.");
 	sizer->Add(auto_create_spawn_chkbox, 0, wxLEFT | wxTOP, 5);
 
+	spawn_canonical_monster_names_chkbox = newd wxCheckBox(editor_page, wxID_ANY, "Use canonical monster names when saving spawns");
+	spawn_canonical_monster_names_chkbox->SetValue(g_settings.getBoolean(Config::SPAWN_USE_CANONICAL_MONSTER_NAMES));
+	spawn_canonical_monster_names_chkbox->SetToolTip("When enabled, monster names in spawn files use the exact casing from monster XML files. When disabled, monster names are saved in lowercase. NPC names always use the name from their NPC XML file.");
+	sizer->Add(spawn_canonical_monster_names_chkbox, 0, wxLEFT | wxTOP, 5);
+
 	allow_multiple_orderitems_chkbox = newd wxCheckBox(editor_page, wxID_ANY, "Prevent toporder conflict");
 	allow_multiple_orderitems_chkbox->SetValue(g_settings.getBoolean(Config::RAW_LIKE_SIMONE));
 	allow_multiple_orderitems_chkbox->SetToolTip("When this option is checked, you can not place several items with the same toporder on one tile using a RAW Brush.");
@@ -318,9 +323,8 @@ wxNotebookPage* PreferencesWindow::CreateGraphicsPage() {
 
 	sprite_transparency_chkbox = newd wxCheckBox(graphics_page, wxID_ANY, "Load SPR with transparency");
 	sprite_transparency_chkbox->SetValue(g_settings.getBoolean(Config::SPRITE_TRANSPARENCY));
-	sprite_transparency_chkbox->SetToolTip("Decode sprites using 4-channel alpha (RGBA), compatible with DAT/SPR .\n"
-		"When enabled, semi-transparent pixels are blended on the map. Technical/invisible item overlays use their configured opacity on top.\n"
-		"Also respected when a client .otfi file sets transparency.");
+	sprite_transparency_chkbox->SetToolTip("Fallback when no .otfi is found: decode sprites using 4-channel alpha (RGBA).\n"
+		"When a .otfi file is present (client folder, assets/, or data/), its DatSpr/transparency flag is loaded automatically and overrides this setting.");
 	sizer->Add(sprite_transparency_chkbox, 0, wxLEFT | wxTOP, 5);
 
 	dark_mode_chkbox = newd wxCheckBox(graphics_page, wxID_ANY, "Use dark mode");
@@ -1219,6 +1223,7 @@ void PreferencesWindow::Apply() {
 	g_settings.setInteger(Config::ERASER_LEAVE_UNIQUE, eraser_leave_unique_chkbox->GetValue());
 	g_settings.setInteger(Config::DOODAD_BRUSH_ERASE_LIKE, doodad_erase_same_chkbox->GetValue());
 	g_settings.setInteger(Config::AUTO_CREATE_SPAWN, auto_create_spawn_chkbox->GetValue());
+	g_settings.setInteger(Config::SPAWN_USE_CANONICAL_MONSTER_NAMES, spawn_canonical_monster_names_chkbox->GetValue());
 	g_settings.setInteger(Config::RAW_LIKE_SIMONE, allow_multiple_orderitems_chkbox->GetValue());
 	g_settings.setInteger(Config::MERGE_MOVE, merge_move_chkbox->GetValue());
 	g_settings.setInteger(Config::MERGE_PASTE, merge_paste_chkbox->GetValue());

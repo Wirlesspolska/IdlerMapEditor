@@ -129,13 +129,13 @@ public:
     void OnRemoveGroundItem(wxCommandEvent& event);
     void OnLoadGroundBrush(wxCommandEvent& event);
     void OnGroundBrowse(wxCommandEvent& event);
-    void OnGridViewChanged(wxBookCtrlEvent& event);
     void OnServerLookPickerClick(wxMouseEvent& event);
     void OnGroundItemPickerClick(wxMouseEvent& event);
     void OnBorderItemPickerClick(wxMouseEvent& event);
     void OnCreateTileset(wxCommandEvent& event);
     void OnTestBrush(wxCommandEvent& event);
     void OnZOrderChoice(wxCommandEvent& event);
+    void OnAutoMatch(wxCommandEvent& event);
 
 protected:
     void CreateGUIControls();
@@ -148,6 +148,7 @@ protected:
     bool ValidateBorder();
     bool ValidateGroundBrush();
     void UpdatePreview();
+    void ApplyAutoMatchedBorders(const std::map<BorderEdgePosition, uint16_t>& matches);
     void ClearItems();
     void ClearGroundItems();
     void UpdateGroundItemsList();
@@ -174,8 +175,9 @@ public:
     wxCheckBox* m_isGroundCheck;
     wxSpinCtrl* m_groupCtrl;
     wxSpinCtrl* m_itemIdCtrl;
+    wxSpinCtrl* m_automatchFromSpin;
+    wxSpinCtrl* m_automatchToSpin;
     BorderItemPicker* m_borderItemPicker;
-    wxNotebook* m_gridViewNotebook;
     
     // Ground Tab
     wxPanel* m_groundPanel;
@@ -284,9 +286,13 @@ public:
 private:
     void DrawEdgeLayout(wxDC& dc, const wxRect& rect);
     void DrawMapPreview(wxDC& dc, const wxRect& rect, bool innerStyle);
-    void DrawSpriteForItem(wxDC& dc, uint16_t itemId, int x, int y, int w, int h);
-    BorderEdgePosition HitTestEdgeCell(int x, int y, const wxRect& rect) const;
+    void DrawSpriteForItem(wxDC& dc, uint16_t itemId, int x, int y, int w, int h) const;
+    void DrawEdgeZone(wxDC& dc, BorderEdgePosition pos, const wxRect& zone);
+    wxRect GetDualCellPrimaryZone(const wxRect& cellRect) const;
+    wxRect GetDualCellSecondaryZone(const wxRect& cellRect) const;
+    wxRect GetSingleCellSpriteZone(const wxRect& cellRect) const;
     void GetEdgeCellRect(int col, int row, const wxRect& panelRect, wxRect& out) const;
+    BorderEdgePosition HitTestEdgeCell(int x, int y, const wxRect& rect) const;
 
     std::map<BorderEdgePosition, uint16_t> m_items;
     BorderEdgePosition m_selectedPosition;

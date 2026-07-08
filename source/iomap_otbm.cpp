@@ -2113,7 +2113,7 @@ bool IOMapOTBM::saveSpawns(Map& map, pugi::xml_document& doc) {
 					if (creature && !creature->isSaved()) {
 						pugi::xml_node creatureNode = spawnNode.append_child(creature->isNpc() ? "npc" : "monster");
 
-						creatureNode.append_attribute("name") = creature->getName().c_str();
+						creatureNode.append_attribute("name") = getSpawnSaveCreatureName(creature->getName(), creature->isNpc()).c_str();
 						creatureNode.append_attribute("x") = x;
 						creatureNode.append_attribute("y") = y;
 						creatureNode.append_attribute("z") = spawnPosition.z;

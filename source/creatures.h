@@ -80,4 +80,6 @@ public:
 
 extern CreatureDatabase g_creatures;
 
+std::string getSpawnSaveCreatureName(const std::string& name, bool isNpc);
+
 #endif

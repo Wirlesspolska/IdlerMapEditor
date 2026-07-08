@@ -283,7 +283,7 @@ protected:
 	// Moved ClearSpriteCache to public section
 	void ManageSpriteCache();
 	int GetSpriteIndexAt(int x, int y) const;
-	void SelectIndex(int index);
+	void SelectIndex(int index, bool notify_gui = true);
 	void CreateNavigationPanel(wxWindow* parent);
 	void UpdateNavigationPanel();
 	void OnNavigationButtonClicked(wxCommandEvent& event);

@@ -289,6 +289,7 @@ public:
 	void cleanSoftwareSprites();
 
 	Sprite* getSprite(int id);
+	uint8_t* getSpriteRGBAData(int id);
 	GameSprite* getCreatureSprite(int id);
 
 	long getElapsedTime() const {
@@ -305,7 +306,7 @@ public:
 	bool loadEditorSprites();
 	// Metadata should be loaded first
 	// This fills the item / creature adress space
-	bool loadOTFI(const FileName& filename, wxString& error, wxArrayString& warnings);
+	bool loadOTFI(const FileName& clientPath, const FileName& dataPath, wxString& error, wxArrayString& warnings);
 	bool loadSpriteMetadata(const FileName& datafile, wxString& error, wxArrayString& warnings);
 	bool loadSpriteMetadataFlags(FileReadHandle& file, GameSprite* sType, wxString& error, wxArrayString& warnings);
 	bool loadSpriteData(const FileName& datafile, wxString& error, wxArrayString& warnings);
@@ -332,6 +333,8 @@ private:
 	// This is used if memcaching is NOT on
 	std::string spritefile;
 	bool loadSpriteDump(uint8_t*& target, uint16_t& size, int sprite_id);
+	bool applyOTFIFile(const wxFileName& otfiPath, wxArrayString& warnings);
+	bool tryLoadOTFIInDirectory(const wxString& directory, wxArrayString& warnings);
 
 	typedef std::map<int, Sprite*> SpriteMap;
 	SpriteMap sprite_space;

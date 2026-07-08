@@ -18,6 +18,7 @@
 #include "main.h"
 
 #include "gui.h"
+#include "settings.h"
 #include "materials.h"
 #include "brush.h"
 #include "creatures.h"
@@ -158,11 +159,7 @@ CreatureType* CreatureType::loadFromOTXML(const FileName& filename, pugi::xml_do
 	}
 
 	CreatureType* ct = newd CreatureType();
-	if (isNpc) {
-		ct->name = nstr(filename.GetName());
-	} else {
-		ct->name = attribute.as_string();
-	}
+	ct->name = attribute.as_string();
 	ct->isNpc = isNpc;
 
 	for (pugi::xml_node optionNode = node.first_child(); optionNode; optionNode = optionNode.next_sibling()) {
@@ -430,4 +427,30 @@ bool CreatureDatabase::saveToXML(const FileName& filename) {
 		}
 	}
 	return doc.save_file(filename.GetFullPath().mb_str(), "\t", pugi::format_default, pugi::encoding_utf8);
+}
+
+std::string getSpawnSaveCreatureName(const std::string& name, bool isNpc) {
+	if (name.empty()) {
+		return name;
+	}
+
+	if (isNpc) {
+		if (g_gui.npc_manager.isLoaded()) {
+			if (NPCEntry* entry = g_gui.npc_manager.findByName(name)) {
+				return entry->name;
+			}
+		}
+		return name;
+	}
+
+	if (g_settings.getBoolean(Config::SPAWN_USE_CANONICAL_MONSTER_NAMES)) {
+		if (g_gui.monster_manager.isLoaded()) {
+			if (MonsterEntry* entry = g_gui.monster_manager.findByName(name)) {
+				return entry->name;
+			}
+		}
+		return name;
+	}
+
+	return as_lower_str(name);
 }

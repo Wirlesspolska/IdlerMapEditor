@@ -73,6 +73,10 @@ public:
 		return optional_border != nullptr;
 	}
 
+	uint16_t getDefaultGroundItemId() const {
+		return border_items.empty() ? 0 : border_items.front().id;
+	}
+
 protected: // Members
 	int32_t z_order;
 	bool has_zilch_outer_border;

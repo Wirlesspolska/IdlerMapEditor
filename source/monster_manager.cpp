@@ -110,6 +110,13 @@ MonsterEntry* MonsterManager::findByName(const std::string& name) const {
     if (it != monster_entries.end()) {
         return const_cast<MonsterEntry*>(&it->second);
     }
+
+    const std::string lower_name = as_lower_str(name);
+    for (const auto& monster_entry : monster_entries) {
+        if (as_lower_str(monster_entry.first) == lower_name) {
+            return const_cast<MonsterEntry*>(&monster_entry.second);
+        }
+    }
     return nullptr;
 }
 

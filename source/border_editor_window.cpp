@@ -252,14 +252,103 @@ void ensureEdgeMasks() {
 	g_edgeMasksReady = true;
 }
 
-double maskOverlayScore(const BorderSpriteAnalysis& sprite, const uint8_t* edgeMask) {
-	int overlap = 0;
-	for (int i = 0; i < SPRITE_PIXELS_SIZE; ++i) {
-		if (sprite.contentMask[i] != 0 && edgeMask[i] != 0) {
-			overlap++;
+constexpr int kTileHalf = SPRITE_PIXELS / 2;
+constexpr int kCornerCell = SPRITE_PIXELS / 4;
+constexpr int kQuadrantActiveMin = 10;
+
+struct TileRegions {
+	int quadrant[4] = {};
+	int corner8[4] = {};
+	int halfNorth = 0;
+	int halfSouth = 0;
+	int halfWest = 0;
+	int halfEast = 0;
+	int activeQuadrants = 0;
+};
+
+TileRegions computeTileRegions(const BorderSpriteAnalysis& sprite) {
+	TileRegions regions;
+	for (int y = 0; y < SPRITE_PIXELS; ++y) {
+		for (int x = 0; x < SPRITE_PIXELS; ++x) {
+			if (sprite.contentMask[y * SPRITE_PIXELS + x] == 0) {
+				continue;
+			}
+
+			const bool topHalf = y < kTileHalf;
+			const bool leftHalf = x < kTileHalf;
+			if (topHalf && leftHalf) {
+				regions.quadrant[0]++;
+			} else if (topHalf && !leftHalf) {
+				regions.quadrant[1]++;
+			} else if (!topHalf && leftHalf) {
+				regions.quadrant[2]++;
+			} else {
+				regions.quadrant[3]++;
+			}
+
+			if (x < kCornerCell && y < kCornerCell) {
+				regions.corner8[0]++;
+			}
+			if (x >= SPRITE_PIXELS - kCornerCell && y < kCornerCell) {
+				regions.corner8[1]++;
+			}
+			if (x < kCornerCell && y >= SPRITE_PIXELS - kCornerCell) {
+				regions.corner8[2]++;
+			}
+			if (x >= SPRITE_PIXELS - kCornerCell && y >= SPRITE_PIXELS - kCornerCell) {
+				regions.corner8[3]++;
+			}
+
+			if (topHalf) {
+				regions.halfNorth++;
+			} else {
+				regions.halfSouth++;
+			}
+			if (leftHalf) {
+				regions.halfWest++;
+			} else {
+				regions.halfEast++;
+			}
 		}
 	}
-	return static_cast<double>(overlap);
+
+	for (int quadrantIndex = 0; quadrantIndex < 4; ++quadrantIndex) {
+		if (regions.quadrant[quadrantIndex] >= kQuadrantActiveMin) {
+			regions.activeQuadrants++;
+		}
+	}
+	return regions;
+}
+
+bool spriteRegionContains(BorderEdgePosition edge, int x, int y) {
+	switch (edge) {
+		case EDGE_N:
+			return y < kTileHalf;
+		case EDGE_S:
+			return y >= kTileHalf;
+		case EDGE_W:
+			return x < kTileHalf;
+		case EDGE_E:
+			return x >= kTileHalf;
+		case EDGE_CNW:
+			return x < kCornerCell && y < kCornerCell;
+		case EDGE_CNE:
+			return x >= SPRITE_PIXELS - kCornerCell && y < kCornerCell;
+		case EDGE_CSW:
+			return x < kCornerCell && y >= SPRITE_PIXELS - kCornerCell;
+		case EDGE_CSE:
+			return x >= SPRITE_PIXELS - kCornerCell && y >= SPRITE_PIXELS - kCornerCell;
+		case EDGE_DNW:
+			return !(x >= kTileHalf && y >= kTileHalf);
+		case EDGE_DNE:
+			return !(x < kTileHalf && y >= kTileHalf);
+		case EDGE_DSW:
+			return !(x >= kTileHalf && y < kTileHalf);
+		case EDGE_DSE:
+			return !(x < kTileHalf && y < kTileHalf);
+		default:
+			return false;
+	}
 }
 
 bool isBorderContentPixel(uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
@@ -293,100 +382,125 @@ bool analyzeBorderSprite(uint16_t itemId, BorderSpriteAnalysis& out, bool ignore
 	int armTopFromTR = 0, armRightFromTR = 0;
 	int armBottomFromBL = 0, armLeftFromBL = 0;
 	int armBottomFromBR = 0, armRightFromBR = 0;
+	bool usedOpaqueFallback = false;
 
-	for (int y = 0; y < SPRITE_PIXELS; ++y) {
-		for (int x = 0; x < SPRITE_PIXELS; ++x) {
-			const int pixelIndex = (y * SPRITE_PIXELS + x) * 4;
-			const uint8_t r = rgba[pixelIndex + 0];
-			const uint8_t g = rgba[pixelIndex + 1];
-			const uint8_t b = rgba[pixelIndex + 2];
-			const uint8_t a = rgba[pixelIndex + 3];
-
-			const int zoneRow = y / zoneSize;
-			const int zoneCol = x / zoneSize;
-			const int zoneIndex = zoneRow * 3 + zoneCol;
-			zoneTotal[zoneIndex]++;
-
-			const bool opaque = isSpritePixelOpaque(r, g, b, a);
-			if (opaque) {
-				out.opaqueCount++;
+	for (int pass = 0; pass < 2; ++pass) {
+		if (pass == 1) {
+			if (out.contentCount > 0) {
+				break;
 			}
+			usedOpaqueFallback = true;
+			std::memset(zoneContent, 0, sizeof(zoneContent));
+			std::memset(zoneTotal, 0, sizeof(zoneTotal));
+			std::memset(bandCounts, 0, sizeof(bandCounts));
+			diagTL = diagTR = diagBL = diagBR = 0;
+			cornerTL = cornerTR = cornerBL = cornerBR = 0;
+			armTopFromTL = armLeftFromTL = 0;
+			armTopFromTR = armRightFromTR = 0;
+			armBottomFromBL = armLeftFromBL = 0;
+			armBottomFromBR = armRightFromBR = 0;
+			out = BorderSpriteAnalysis();
+			out.itemId = itemId;
+		}
 
-			if (!isBorderContentPixel(r, g, b, a)) {
-				continue;
-			}
+		for (int y = 0; y < SPRITE_PIXELS; ++y) {
+			for (int x = 0; x < SPRITE_PIXELS; ++x) {
+				const int pixelIndex = (y * SPRITE_PIXELS + x) * 4;
+				const uint8_t r = rgba[pixelIndex + 0];
+				const uint8_t g = rgba[pixelIndex + 1];
+				const uint8_t b = rgba[pixelIndex + 2];
+				const uint8_t a = rgba[pixelIndex + 3];
 
-			const int maskIndex = y * SPRITE_PIXELS + x;
-			if (!ignoreGroundSubtraction && pixelMatchesGround(r, g, b, maskIndex)) {
-				continue;
-			}
+				const int zoneRow = y / zoneSize;
+				const int zoneCol = x / zoneSize;
+				const int zoneIndex = zoneRow * 3 + zoneCol;
+				zoneTotal[zoneIndex]++;
 
-			zoneContent[zoneIndex]++;
-			out.contentMask[maskIndex] = 1;
-			out.contentCount++;
-			out.avgR += r;
-			out.avgG += g;
-			out.avgB += b;
+				const bool opaque = isSpritePixelOpaque(r, g, b, a);
+				if (opaque) {
+					out.opaqueCount++;
+				}
 
-			if (y < bandSize) {
-				bandCounts[0]++;
-			}
-			if (y >= SPRITE_PIXELS - bandSize) {
-				bandCounts[1]++;
-			}
-			if (x < bandSize) {
-				bandCounts[2]++;
-			}
-			if (x >= SPRITE_PIXELS - bandSize) {
-				bandCounts[3]++;
-			}
+				if (usedOpaqueFallback) {
+					if (!opaque) {
+						continue;
+					}
+				} else if (!isBorderContentPixel(r, g, b, a)) {
+					continue;
+				}
 
-			const int localX = x % zoneSize;
-			const int localY = y % zoneSize;
+				const int maskIndex = y * SPRITE_PIXELS + x;
+				if (!usedOpaqueFallback && !ignoreGroundSubtraction && pixelMatchesGround(r, g, b, maskIndex)) {
+					continue;
+				}
 
-			if (zoneRow == 0 && zoneCol == 0) {
-				cornerTL++;
-				if (std::abs(localX - localY) <= 2) {
-					diagTL++;
+				zoneContent[zoneIndex]++;
+				out.contentMask[maskIndex] = 1;
+				out.contentCount++;
+				out.avgR += r;
+				out.avgG += g;
+				out.avgB += b;
+
+				if (y < bandSize) {
+					bandCounts[0]++;
 				}
-				if (localY <= 2) {
-					armTopFromTL++;
+				if (y >= SPRITE_PIXELS - bandSize) {
+					bandCounts[1]++;
 				}
-				if (localX <= 2) {
-					armLeftFromTL++;
+				if (x < bandSize) {
+					bandCounts[2]++;
 				}
-			} else if (zoneRow == 0 && zoneCol == 2) {
-				cornerTR++;
-				if (std::abs((zoneSize - 1 - localX) - localY) <= 2) {
-					diagTR++;
+				if (x >= SPRITE_PIXELS - bandSize) {
+					bandCounts[3]++;
 				}
-				if (localY <= 2) {
-					armTopFromTR++;
-				}
-				if (localX >= zoneSize - 3) {
-					armRightFromTR++;
-				}
-			} else if (zoneRow == 2 && zoneCol == 0) {
-				cornerBL++;
-				if (std::abs(localX - (zoneSize - 1 - localY)) <= 2) {
-					diagBL++;
-				}
-				if (localY >= zoneSize - 3) {
-					armBottomFromBL++;
-				}
-				if (localX <= 2) {
-					armLeftFromBL++;
-				}
-			} else if (zoneRow == 2 && zoneCol == 2) {
-				cornerBR++;
-				if (std::abs((zoneSize - 1 - localX) - (zoneSize - 1 - localY)) <= 2) {
-					diagBR++;
-				}
-				if (localY >= zoneSize - 3) {
-					armBottomFromBR++;
-				}
-				if (localX >= zoneSize - 3) {
-					armRightFromBR++;
+
+				const int localX = x % zoneSize;
+				const int localY = y % zoneSize;
+
+				if (zoneRow == 0 && zoneCol == 0) {
+					cornerTL++;
+					if (std::abs(localX - localY) <= 2) {
+						diagTL++;
+					}
+					if (localY <= 2) {
+						armTopFromTL++;
+					}
+					if (localX <= 2) {
+						armLeftFromTL++;
+					}
+				} else if (zoneRow == 0 && zoneCol == 2) {
+					cornerTR++;
+					if (std::abs((zoneSize - 1 - localX) - localY) <= 2) {
+						diagTR++;
+					}
+					if (localY <= 2) {
+						armTopFromTR++;
+					}
+					if (localX >= zoneSize - 3) {
+						armRightFromTR++;
+					}
+				} else if (zoneRow == 2 && zoneCol == 0) {
+					cornerBL++;
+					if (std::abs(localX - (zoneSize - 1 - localY)) <= 2) {
+						diagBL++;
+					}
+					if (localY >= zoneSize - 3) {
+						armBottomFromBL++;
+					}
+					if (localX <= 2) {
+						armLeftFromBL++;
+					}
+				} else if (zoneRow == 2 && zoneCol == 2) {
+					cornerBR++;
+					if (std::abs((zoneSize - 1 - localX) - (zoneSize - 1 - localY)) <= 2) {
+						diagBR++;
+					}
+					if (localY >= zoneSize - 3) {
+						armBottomFromBR++;
+					}
+					if (localX >= zoneSize - 3) {
+						armRightFromBR++;
+					}
 				}
 			}
 		}
@@ -433,9 +547,36 @@ bool isLikelyFullGroundTile(const BorderSpriteAnalysis& analysis) {
 	return analysis.fillRatio > 0.72 && analysis.centerDensity > 0.65;
 }
 
+double regionOverlapScore(const BorderSpriteAnalysis& sprite, BorderEdgePosition edge) {
+	int inside = 0;
+	int outside = 0;
+	for (int y = 0; y < SPRITE_PIXELS; ++y) {
+		for (int x = 0; x < SPRITE_PIXELS; ++x) {
+			if (sprite.contentMask[y * SPRITE_PIXELS + x] == 0) {
+				continue;
+			}
+			if (spriteRegionContains(edge, x, y)) {
+				inside++;
+			} else {
+				outside++;
+			}
+		}
+	}
+
+	switch (edge) {
+		case EDGE_N:
+		case EDGE_S:
+		case EDGE_E:
+		case EDGE_W:
+			// Cardinals only occupy one half (16px); penalize pixels outside that half.
+			return static_cast<double>(inside) - outside * 0.65;
+		default:
+			return static_cast<double>(inside);
+	}
+}
+
 double edgeCoverageScore(const BorderSpriteAnalysis& analysis, BorderEdgePosition edge) {
-	ensureEdgeMasks();
-	return maskOverlayScore(analysis, g_edgeMasks[edge]);
+	return regionOverlapScore(analysis, edge);
 }
 
 struct ScoredCandidate {
@@ -559,20 +700,27 @@ SpriteTier tierForEdge(BorderEdgePosition edge) {
 	}
 }
 
+int maxCorner8Count(const TileRegions& regions) {
+	return std::max(std::max(regions.corner8[0], regions.corner8[1]), std::max(regions.corner8[2], regions.corner8[3]));
+}
+
 SpriteTier classifySpriteTier(const ScoredCandidate& candidate) {
-	BorderEdgePosition bestEdge = EDGE_N;
-	double bestScore = -1.0;
-	for (int edgeIndex = EDGE_N; edgeIndex < EDGE_COUNT; ++edgeIndex) {
-		if (candidate.edgeScores[edgeIndex] > bestScore) {
-			bestScore = candidate.edgeScores[edgeIndex];
-			bestEdge = static_cast<BorderEdgePosition>(edgeIndex);
-		}
+	const TileRegions regions = computeTileRegions(candidate.analysis);
+	if (regions.activeQuadrants >= 3) {
+		return TIER_DIAGONAL;
 	}
-	return tierForEdge(bestEdge);
+
+	const int cornerPixels = maxCorner8Count(regions);
+	const int maxHalf = std::max(std::max(regions.halfNorth, regions.halfSouth), std::max(regions.halfWest, regions.halfEast));
+	if (cornerPixels >= 2 && candidate.analysis.contentCount <= maxHalf + kCornerCell * kCornerCell) {
+		return TIER_CORNER;
+	}
+	return TIER_CARDINAL;
 }
 
 void buildTierPools(
 	const std::vector<ScoredCandidate>& candidates,
+	int rangeIdCount,
 	std::vector<const ScoredCandidate*>& cornerPool,
 	std::vector<const ScoredCandidate*>& cardinalPool,
 	std::vector<const ScoredCandidate*>& diagonalPool) {
@@ -584,166 +732,104 @@ void buildTierPools(
 		return;
 	}
 
-	std::vector<const ScoredCandidate*> sorted;
-	sorted.reserve(candidates.size());
+	struct RankedCandidate {
+		const ScoredCandidate* candidate;
+		TileRegions regions;
+	};
+
+	std::vector<RankedCandidate> ranked;
+	ranked.reserve(candidates.size());
 	for (const ScoredCandidate& candidate : candidates) {
-		sorted.push_back(&candidate);
+		ranked.push_back({&candidate, computeTileRegions(candidate.analysis)});
 	}
-	std::sort(sorted.begin(), sorted.end(), [](const ScoredCandidate* a, const ScoredCandidate* b) {
-		return a->analysis.contentCount < b->analysis.contentCount;
+
+	for (const RankedCandidate& entry : ranked) {
+		if (entry.regions.activeQuadrants >= 3) {
+			diagonalPool.push_back(entry.candidate);
+		}
+	}
+
+	std::vector<RankedCandidate> nonDiagonal;
+	for (const RankedCandidate& entry : ranked) {
+		if (entry.regions.activeQuadrants < 3) {
+			nonDiagonal.push_back(entry);
+		}
+	}
+
+	std::sort(nonDiagonal.begin(), nonDiagonal.end(), [](const RankedCandidate& a, const RankedCandidate& b) {
+		return a.candidate->analysis.contentCount < b.candidate->analysis.contentCount;
 	});
 
-	if (sorted.size() >= 12) {
-		std::vector<const ScoredCandidate*> buckets[3];
-		for (const ScoredCandidate* candidate : sorted) {
-			buckets[classifySpriteTier(*candidate)].push_back(candidate);
+	const bool standardTwelvePieceSet = rangeIdCount >= 12;
+	const int cornerTarget = (standardTwelvePieceSet && candidates.size() >= 12) ? 4 : static_cast<int>(nonDiagonal.size() / 2);
+
+	for (size_t index = 0; index < nonDiagonal.size(); ++index) {
+		if (static_cast<int>(cornerPool.size()) < cornerTarget) {
+			cornerPool.push_back(nonDiagonal[index].candidate);
+		} else {
+			cardinalPool.push_back(nonDiagonal[index].candidate);
 		}
+	}
 
-		const int targets[3] = {4, 4, 4};
-		auto countBucket = [&](int tier) {
-			return static_cast<int>(buckets[tier].size());
-		};
-		auto removeFromBucket = [&](int tier, const ScoredCandidate* candidate) {
-			auto& bucket = buckets[tier];
-			for (auto it = bucket.begin(); it != bucket.end(); ++it) {
-				if (*it == candidate) {
-					bucket.erase(it);
-					return;
-				}
-			}
-		};
-		auto bestEdgeScore = [](const ScoredCandidate& candidate, SpriteTier tier) {
-			double best = -1.0;
-			for (int edgeIndex = EDGE_N; edgeIndex < EDGE_COUNT; ++edgeIndex) {
-				const BorderEdgePosition edge = static_cast<BorderEdgePosition>(edgeIndex);
-				if (tierForEdge(edge) != tier) {
-					continue;
-				}
-				if (candidate.edgeScores[edgeIndex] > best) {
-					best = candidate.edgeScores[edgeIndex];
-				}
-			}
-			return best;
-		};
-
-		for (int safety = 0; safety < 48; ++safety) {
-			int overTier = -1;
-			int underTier = -1;
-			for (int tier = 0; tier < 3; ++tier) {
-				if (countBucket(tier) > targets[tier] && overTier == -1) {
-					overTier = tier;
-				}
-				if (countBucket(tier) < targets[tier] && underTier == -1) {
-					underTier = tier;
-				}
-			}
-			if (overTier == -1 || underTier == -1) {
-				break;
-			}
-
-			const ScoredCandidate* bestMove = nullptr;
-			double bestWeakness = -1.0;
-			for (const ScoredCandidate* candidate : buckets[overTier]) {
-				const double inTier = bestEdgeScore(*candidate, static_cast<SpriteTier>(overTier));
-				const double outTier = bestEdgeScore(*candidate, static_cast<SpriteTier>(underTier));
-				const double weakness = inTier - outTier;
-				if (bestMove == nullptr || weakness < bestWeakness) {
-					bestMove = candidate;
-					bestWeakness = weakness;
-				}
-			}
-			if (bestMove == nullptr) {
-				break;
-			}
-			removeFromBucket(overTier, bestMove);
-			buckets[underTier].push_back(bestMove);
-		}
-
-		cornerPool = buckets[TIER_CORNER];
-		cardinalPool = buckets[TIER_CARDINAL];
-		diagonalPool = buckets[TIER_DIAGONAL];
+	const bool canFillAllTiers = candidates.size() >= 12;
+	if (!canFillAllTiers) {
 		return;
 	}
 
-	std::vector<const ScoredCandidate*> buckets[3];
-	for (const ScoredCandidate* candidate : sorted) {
-		buckets[classifySpriteTier(*candidate)].push_back(candidate);
-	}
-
-	const size_t spriteCount = sorted.size();
-	const int targets[3] = {
-		spriteCount >= 12 ? 4 : static_cast<int>(spriteCount / 3),
-		spriteCount >= 12 ? 4 : static_cast<int>(spriteCount / 3),
-		spriteCount >= 12 ? 4 : static_cast<int>(spriteCount - 2 * (spriteCount / 3)),
+	const int targets[3] = {4, 4, 4};
+	auto countTier = [&](const std::vector<const ScoredCandidate*>& pool) {
+		return static_cast<int>(pool.size());
 	};
 
-	auto countBucket = [&](int tier) {
-		return static_cast<int>(buckets[tier].size());
-	};
-
-	auto removeFromBucket = [&](int tier, const ScoredCandidate* candidate) {
-		auto& bucket = buckets[tier];
-		for (auto it = bucket.begin(); it != bucket.end(); ++it) {
+	auto removeFrom = [&](std::vector<const ScoredCandidate*>& pool, const ScoredCandidate* candidate) {
+		for (auto it = pool.begin(); it != pool.end(); ++it) {
 			if (*it == candidate) {
-				bucket.erase(it);
+				pool.erase(it);
 				return;
 			}
 		}
 	};
 
-	auto bestEdgeScore = [](const ScoredCandidate& candidate, SpriteTier tier) {
-		double best = -1.0;
-		for (int edgeIndex = EDGE_N; edgeIndex < EDGE_COUNT; ++edgeIndex) {
-			const BorderEdgePosition edge = static_cast<BorderEdgePosition>(edgeIndex);
-			if (tierForEdge(edge) != tier) {
-				continue;
-			}
-			if (candidate.edgeScores[edgeIndex] > best) {
-				best = candidate.edgeScores[edgeIndex];
-			}
-		}
-		return best;
-	};
-
 	for (int safety = 0; safety < 48; ++safety) {
+		std::vector<const ScoredCandidate*>* pools[3] = {&cornerPool, &cardinalPool, &diagonalPool};
 		int overTier = -1;
 		int underTier = -1;
 		for (int tier = 0; tier < 3; ++tier) {
-			if (countBucket(tier) > targets[tier] && overTier == -1) {
+			if (countTier(*pools[tier]) > targets[tier] && overTier == -1) {
 				overTier = tier;
 			}
-			if (countBucket(tier) < targets[tier] && underTier == -1) {
+			if (countTier(*pools[tier]) < targets[tier] && underTier == -1) {
 				underTier = tier;
 			}
 		}
-
 		if (overTier == -1 || underTier == -1) {
 			break;
 		}
 
 		const ScoredCandidate* bestMove = nullptr;
-		double bestWeakness = -1.0;
-		for (const ScoredCandidate* candidate : buckets[overTier]) {
-			const double inTier = bestEdgeScore(*candidate, static_cast<SpriteTier>(overTier));
-			const double outTier = bestEdgeScore(*candidate, static_cast<SpriteTier>(underTier));
-			const double weakness = inTier - outTier;
-			if (bestMove == nullptr || weakness < bestWeakness) {
+		double bestScore = 1e9;
+		for (const ScoredCandidate* candidate : *pools[overTier]) {
+			const TileRegions regions = computeTileRegions(candidate->analysis);
+			double score = 0.0;
+			if (overTier == TIER_DIAGONAL) {
+				score = static_cast<double>(regions.activeQuadrants);
+			} else if (overTier == TIER_CORNER) {
+				score = static_cast<double>(candidate->analysis.contentCount);
+			} else {
+				score = -static_cast<double>(maxCorner8Count(regions));
+			}
+			if (bestMove == nullptr || score < bestScore) {
 				bestMove = candidate;
-				bestWeakness = weakness;
+				bestScore = score;
 			}
 		}
-
 		if (bestMove == nullptr) {
 			break;
 		}
 
-		removeFromBucket(overTier, bestMove);
-		buckets[underTier].push_back(bestMove);
+		removeFrom(*pools[overTier], bestMove);
+		pools[underTier]->push_back(bestMove);
 	}
-
-	cornerPool = buckets[TIER_CORNER];
-	cardinalPool = buckets[TIER_CARDINAL];
-	diagonalPool = buckets[TIER_DIAGONAL];
 }
 
 void fillRemainingMatches(
@@ -804,60 +890,106 @@ void fillRemainingMatches(
 		return;
 	}
 
-	if (emptyEdges.size() == available.size() && emptyEdges.size() <= 8) {
-		std::vector<size_t> perm(available.size());
-		std::iota(perm.begin(), perm.end(), 0);
+	// Only pair sprites with edges in the same tier (prevents w <-> dnw swaps).
+	for (int tierIndex = TIER_CORNER; tierIndex <= TIER_DIAGONAL; ++tierIndex) {
+		const SpriteTier tier = static_cast<SpriteTier>(tierIndex);
 
-		double bestTotal = -1.0;
-		std::vector<size_t> bestPerm = perm;
-		do {
-			double total = 0.0;
-			for (size_t edgeIndex = 0; edgeIndex < emptyEdges.size(); ++edgeIndex) {
-				total += available[perm[edgeIndex]]->edgeScores[emptyEdges[edgeIndex]];
-			}
-			if (total > bestTotal) {
-				bestTotal = total;
-				bestPerm = perm;
-			}
-		} while (std::next_permutation(perm.begin(), perm.end()));
-
-		for (size_t edgeIndex = 0; edgeIndex < emptyEdges.size(); ++edgeIndex) {
-			outMatches[emptyEdges[edgeIndex]] = available[bestPerm[edgeIndex]]->analysis.itemId;
-		}
-		return;
-	}
-
-	std::set<BorderEdgePosition> filledEdges;
-	std::set<uint16_t> filledItems;
-	for (;;) {
-		BorderEdgePosition bestEdge = EDGE_NONE;
-		uint16_t bestItemId = 0;
-		double bestOverlay = -1.0;
-
+		std::vector<BorderEdgePosition> tierEmptyEdges;
 		for (const BorderEdgePosition edge : emptyEdges) {
-			if (filledEdges.count(edge) != 0) {
+			if (tierForEdge(edge) == tier) {
+				tierEmptyEdges.push_back(edge);
+			}
+		}
+		if (tierEmptyEdges.empty()) {
+			continue;
+		}
+
+		std::vector<const ScoredCandidate*> tierAvailable;
+		for (const ScoredCandidate* candidate : available) {
+			if (usedItems.count(candidate->analysis.itemId) != 0) {
 				continue;
 			}
-			for (const ScoredCandidate* candidate : available) {
-				if (filledItems.count(candidate->analysis.itemId) != 0) {
+			if (classifySpriteTier(*candidate) == tier) {
+				tierAvailable.push_back(candidate);
+			}
+		}
+		if (tierAvailable.empty()) {
+			continue;
+		}
+
+		const size_t pairCount = std::min(tierEmptyEdges.size(), tierAvailable.size());
+		if (pairCount == 0) {
+			continue;
+		}
+
+		if (pairCount <= 8) {
+			std::vector<size_t> perm(pairCount);
+			std::iota(perm.begin(), perm.end(), 0);
+
+			double bestTotal = -1.0;
+			std::vector<size_t> bestPerm = perm;
+			do {
+				double total = 0.0;
+				for (size_t edgeIndex = 0; edgeIndex < pairCount; ++edgeIndex) {
+					total += tierAvailable[perm[edgeIndex]]->edgeScores[tierEmptyEdges[edgeIndex]];
+				}
+				if (total > bestTotal) {
+					bestTotal = total;
+					bestPerm = perm;
+				}
+			} while (std::next_permutation(perm.begin(), perm.end()));
+
+			for (size_t edgeIndex = 0; edgeIndex < pairCount; ++edgeIndex) {
+				const uint16_t itemId = tierAvailable[bestPerm[edgeIndex]]->analysis.itemId;
+				outMatches[tierEmptyEdges[edgeIndex]] = itemId;
+				usedItems.insert(itemId);
+			}
+			continue;
+		}
+
+		for (size_t edgeIndex = 0; edgeIndex < pairCount; ++edgeIndex) {
+			const BorderEdgePosition edge = tierEmptyEdges[edgeIndex];
+			double bestOverlay = -1.0;
+			const ScoredCandidate* bestCandidate = nullptr;
+			for (const ScoredCandidate* candidate : tierAvailable) {
+				if (usedItems.count(candidate->analysis.itemId) != 0) {
 					continue;
 				}
-				const double overlay = candidate->edgeScores[edge];
-				if (overlay > bestOverlay) {
-					bestOverlay = overlay;
-					bestEdge = edge;
-					bestItemId = candidate->analysis.itemId;
+				if (candidate->edgeScores[edge] > bestOverlay) {
+					bestOverlay = candidate->edgeScores[edge];
+					bestCandidate = candidate;
 				}
+			}
+			if (bestCandidate != nullptr) {
+				outMatches[edge] = bestCandidate->analysis.itemId;
+				usedItems.insert(bestCandidate->analysis.itemId);
+			}
+		}
+	}
+
+	// Last resort: any unused sprite for any still-empty edge.
+	for (int edgeIndex = EDGE_N; edgeIndex < EDGE_COUNT; ++edgeIndex) {
+		const BorderEdgePosition edge = static_cast<BorderEdgePosition>(edgeIndex);
+		if (outMatches.count(edge) != 0) {
+			continue;
+		}
+
+		double bestOverlay = -1.0;
+		uint16_t bestItemId = 0;
+		for (const ScoredCandidate* candidate : available) {
+			if (usedItems.count(candidate->analysis.itemId) != 0) {
+				continue;
+			}
+			if (candidate->edgeScores[edge] > bestOverlay) {
+				bestOverlay = candidate->edgeScores[edge];
+				bestItemId = candidate->analysis.itemId;
 			}
 		}
 
-		if (bestEdge == EDGE_NONE || bestItemId == 0) {
-			break;
+		if (bestItemId != 0) {
+			outMatches[edge] = bestItemId;
+			usedItems.insert(bestItemId);
 		}
-
-		outMatches[bestEdge] = bestItemId;
-		filledEdges.insert(bestEdge);
-		filledItems.insert(bestItemId);
 	}
 }
 
@@ -873,13 +1005,16 @@ bool autoMatchBorderSprites(uint16_t seedItemId, int minItemId, int maxItemId, u
 		std::swap(minItemId, maxItemId);
 	}
 
+	const int rangeIdCount = maxItemId - minItemId + 1;
+
 	std::vector<ScoredCandidate> candidates;
 	int skippedFullTiles = 0;
 
 	for (int itemId = minItemId; itemId <= maxItemId; ++itemId) {
 		ScoredCandidate scored;
-		if (!analyzeBorderSprite(static_cast<uint16_t>(itemId), scored.analysis)) {
-			if (!analyzeBorderSprite(static_cast<uint16_t>(itemId), scored.analysis, true)) {
+		// Prefer full sprite mask (ground subtraction can erase thin w/cnw pieces).
+		if (!analyzeBorderSprite(static_cast<uint16_t>(itemId), scored.analysis, true)) {
+			if (!analyzeBorderSprite(static_cast<uint16_t>(itemId), scored.analysis, false)) {
 				continue;
 			}
 		}
@@ -917,7 +1052,7 @@ bool autoMatchBorderSprites(uint16_t seedItemId, int minItemId, int maxItemId, u
 	std::vector<const ScoredCandidate*> cornerPool;
 	std::vector<const ScoredCandidate*> cardinalPool;
 	std::vector<const ScoredCandidate*> diagonalPool;
-	buildTierPools(candidates, cornerPool, cardinalPool, diagonalPool);
+	buildTierPools(candidates, rangeIdCount, cornerPool, cardinalPool, diagonalPool);
 
 	assignOverlayGroup(cornerPool, kCornerEdges, sizeof(kCornerEdges) / sizeof(kCornerEdges[0]), outMatches);
 	assignOverlayGroup(cardinalPool, kCardinalEdges, sizeof(kCardinalEdges) / sizeof(kCardinalEdges[0]), outMatches);
@@ -925,7 +1060,7 @@ bool autoMatchBorderSprites(uint16_t seedItemId, int minItemId, int maxItemId, u
 	fillRemainingMatches(candidates, minItemId, maxItemId, outMatches);
 
 	if (outMatches.empty()) {
-		summary = "No border matches found after mask overlay scoring.";
+		summary = "No border matches found after region matching.";
 		return false;
 	}
 
@@ -942,11 +1077,11 @@ bool autoMatchBorderSprites(uint16_t seedItemId, int minItemId, int maxItemId, u
 			}
 		}
 		summary = wxString::Format(
-			"Auto-matched %zu/%d border pieces (corner/cardinal/diagonal tiers + overlay) in IDs %d to %d (%d full tiles skipped). Still empty: %s",
+			"Auto-matched %zu/%d border pieces (8x8/16x16 region match) in IDs %d to %d (%d full tiles skipped). Still empty: %s",
 			outMatches.size(), expectedEdges, minItemId, maxItemId, skippedFullTiles, missing);
 	} else {
 		summary = wxString::Format(
-			"Auto-matched %zu/%d border pieces (corner/cardinal/diagonal tiers + overlay) in IDs %d to %d (%d full tiles skipped).",
+			"Auto-matched %zu/%d border pieces (8x8/16x16 region match) in IDs %d to %d (%d full tiles skipped).",
 			outMatches.size(), expectedEdges, minItemId, maxItemId, skippedFullTiles);
 	}
 	return true;
@@ -1266,7 +1401,7 @@ void BorderEditorDialog::CreateGUIControls() {
     itemSizer->Add(m_automatchToSpin, 0, wxRIGHT, 5);
 
     wxButton* autoMatchButton = new wxButton(m_borderPanel, ID_BORDER_AUTOMATCH, "Auto Match", wxDefaultPosition, wxDefaultSize, wxBU_EXACTFIT);
-    autoMatchButton->SetToolTip("Scan the ID range: bucket sprites by pixel count (corners/cardinals/diagonals), then overlay-match within each group of 4.");
+    autoMatchButton->SetToolTip("Scan the ID range: classify by 8x8 corners / 16px cardinals / 3-quarter L-shapes, then match within each group.");
     itemSizer->Add(autoMatchButton, 0);
     gridSizer->Add(itemSizer, 0, wxEXPAND | wxALL, 5);
     

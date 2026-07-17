@@ -16,6 +16,7 @@
 //////////////////////////////////////////////////////////////////////
 
 #include "main.h"
+#include "viewport_z.h"
 #include "light_drawer.h"
 
 LightDrawer::LightDrawer() {
@@ -116,9 +117,9 @@ void LightDrawer::setGlobalLightColor(uint8_t color) {
 }
 
 void LightDrawer::addLight(int map_x, int map_y, int map_z, const SpriteLight& light) {
-	if (map_z <= GROUND_LAYER) {
-		map_x -= (GROUND_LAYER - map_z);
-		map_y -= (GROUND_LAYER - map_z);
+	if (ViewportZ::IsSurfaceOrSky(map_z)) {
+		map_x -= (ViewportZ::GetGroundLayer() - map_z);
+		map_y -= (ViewportZ::GetGroundLayer() - map_z);
 	}
 
 	if (map_x <= 0 || map_x >= MAP_MAX_WIDTH || map_y <= 0 || map_y >= MAP_MAX_HEIGHT) {

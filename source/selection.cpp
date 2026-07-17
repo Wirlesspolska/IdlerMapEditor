@@ -16,6 +16,7 @@
 //////////////////////////////////////////////////////////////////////
 
 #include "main.h"
+#include "viewport_z.h"
 
 #include "selection.h"
 #include "tile.h"
@@ -325,7 +326,7 @@ wxThread::ExitCode SelectionThread::Entry() {
 				selection.add(tile);
 			}
 		}
-		if (z <= GROUND_LAYER && g_settings.getInteger(Config::COMPENSATED_SELECT)) {
+		if (ViewportZ::IsSurfaceOrSky(z) && g_settings.getInteger(Config::COMPENSATED_SELECT)) {
 			++start.x;
 			++start.y;
 			++end.x;

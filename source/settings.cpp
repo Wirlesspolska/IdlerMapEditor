@@ -291,6 +291,7 @@ void Settings::IO(IOMode mode) {
 	Int(REPLACE_SIZE, 500);
 	Int(COPY_POSITION_FORMAT, 0);
 	Int(REFRESH_RADIUS, 15);
+	Int(VIEWPORT_MODE, 0); // Classic
 
 	section("Graphics");
 	Int(TEXTURE_MANAGEMENT, 1);

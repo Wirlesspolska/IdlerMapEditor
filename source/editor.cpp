@@ -43,7 +43,7 @@
 #include "borderize_window.h"
 #include "wallize_window.h"
 
-Editor::Editor(CopyBuffer& copybuffer) :
+Editor::Editor(CopyBuffer& copybuffer, ClientVersionID force_version, const FileName& create_path) :
 	live_server(nullptr),
 	live_client(nullptr),
 
@@ -55,14 +55,17 @@ Editor::Editor(CopyBuffer& copybuffer) :
 	wxArrayString warnings;
 	bool ok = true;
 
-	ClientVersionID defaultVersion = ClientVersionID(g_settings.getInteger(Config::DEFAULT_CLIENT_VERSION));
-	if (defaultVersion == CLIENT_VERSION_NONE) {
-		defaultVersion = ClientVersion::getLatestVersion()->getID();
+	ClientVersionID targetVersion = force_version;
+	if (targetVersion == CLIENT_VERSION_NONE) {
+		targetVersion = ClientVersionID(g_settings.getInteger(Config::DEFAULT_CLIENT_VERSION));
+		if (targetVersion == CLIENT_VERSION_NONE) {
+			targetVersion = ClientVersion::getLatestVersion()->getID();
+		}
 	}
 
-	if (g_gui.GetCurrentVersionID() != defaultVersion) {
+	if (g_gui.GetCurrentVersionID() != targetVersion) {
 		if (g_gui.CloseAllEditors()) {
-			ok = g_gui.LoadVersion(defaultVersion, error, warnings);
+			ok = g_gui.LoadVersion(targetVersion, error, warnings);
 			g_gui.PopupDialog("Error", error, wxOK);
 			g_gui.ListDialog("Warnings", warnings);
 		} else {
@@ -81,16 +84,31 @@ Editor::Editor(CopyBuffer& copybuffer) :
 
 	map.height = 2048;
 	map.width = 2048;
+	map.ensureDefaultTown();
 
-	static int unnamed_counter = 0;
+	if (create_path.IsOk() && !create_path.GetFullPath().empty()) {
+		FileName fn(create_path);
+		if (!fn.HasExt()) {
+			fn.SetExt("otbm");
+		}
+		map.filename = nstr(fn.GetFullPath());
+		map.name = nstr(fn.GetFullName());
+		map.spawnfile = nstr(fn.GetName()) + "-spawn.xml";
+		map.housefile = nstr(fn.GetName()) + "-house.xml";
+		map.waypointfile = nstr(fn.GetName()) + "-waypoint.xml";
+		map.description = "No map description available.";
+		map.unnamed = false;
+	} else {
+		static int unnamed_counter = 0;
 
-	std::string sname = "Untitled-" + i2s(++unnamed_counter);
-	map.name = sname + ".otbm";
-	map.spawnfile = sname + "-spawn.xml";
-	map.housefile = sname + "-house.xml";
-	map.waypointfile = sname + "-waypoint.xml";
-	map.description = "No map description available.";
-	map.unnamed = true;
+		std::string sname = "Untitled-" + i2s(++unnamed_counter);
+		map.name = sname + ".otbm";
+		map.spawnfile = sname + "-spawn.xml";
+		map.housefile = sname + "-house.xml";
+		map.waypointfile = sname + "-waypoint.xml";
+		map.description = "No map description available.";
+		map.unnamed = true;
+	}
 
 	map.doChange();
 }

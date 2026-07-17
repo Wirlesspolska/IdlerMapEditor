@@ -16,6 +16,7 @@
 //////////////////////////////////////////////////////////////////////
 
 #include "main.h"
+#include "viewport_z.h"
 
 #include "map_window.h"
 #include "gui.h"
@@ -165,10 +166,10 @@ void MapWindow::SetScreenCenterPosition(const Position& position) {
 
 	int x = position.x * TileSize;
 	int y = position.y * TileSize;
-	if (position.z <= GROUND_LAYER) {
+	if (ViewportZ::IsSurfaceOrSky(position.z)) {
 		// Compensate for floor offset above ground
-		x -= (GROUND_LAYER - position.z) * TileSize;
-		y -= (GROUND_LAYER - position.z) * TileSize;
+		x -= (ViewportZ::GetGroundLayer() - position.z) * TileSize;
+		y -= (ViewportZ::GetGroundLayer() - position.z) * TileSize;
 	}
 
 	const Position& center = GetScreenCenterPosition();

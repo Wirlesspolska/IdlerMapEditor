@@ -249,6 +249,7 @@
     <ClCompile Include="..\..\source\tileset_window.cpp" />
     <ClCompile Include="..\..\source\wallize_window.cpp" />
     <ClCompile Include="..\..\source\welcome_dialog.cpp" />
+    <ClCompile Include="..\..\source\new_map_dialog.cpp" />
     <ClInclude Include="..\..\source\add_creature_dialog.h" />
     <ClInclude Include="..\..\source\add_item_window.h" />
     <ClInclude Include="..\..\source\add_tileset_window.h" />
@@ -475,6 +476,7 @@
     <ClCompile Include="..\..\source\waypoint_brush.cpp" />
     <ClInclude Include="..\..\source\find_item_window.h" />
     <ClInclude Include="..\..\source\welcome_dialog.h" />
+    <ClInclude Include="..\..\source\new_map_dialog.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\..\source\mkpch.cpp">

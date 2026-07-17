@@ -18,6 +18,7 @@
 #include "main.h"
 
 #include "live_client.h"
+#include "viewport_z.h"
 #include "live_tab.h"
 #include "live_action.h"
 #include "editor.h"
@@ -975,7 +976,7 @@ void LiveClient::requestVisibleRefresh() {
 		message.write<int32_t>(endNodeX);
 		message.write<int32_t>(endNodeY);
 		message.write<uint8_t>(viewPosition.z);
-		message.write<bool>(viewPosition.z > GROUND_LAYER); // underground flag
+		message.write<bool>(ViewportZ::IsUnderground(viewPosition.z)); // underground flag
 		
 		logMessage(wxString::Format("[Client]: Requesting refresh for visible area around (%d,%d,%d) with radius %d", 
 			viewPosition.x, viewPosition.y, viewPosition.z, refreshRadius));

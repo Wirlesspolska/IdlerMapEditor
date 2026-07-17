@@ -37,6 +37,7 @@
 #include <wx/filename.h>
 #include <wx/filepicker.h>
 #include <wx/textdlg.h>
+#include <wx/numdlg.h>
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -52,7 +53,12 @@
 #define ID_CREATE_TILESET wxID_HIGHEST + 7
 #define ID_TEST_BRUSH wxID_HIGHEST + 8
 #define ID_ZORDER_CHOICE wxID_HIGHEST + 9
-#define ID_BORDER_AUTOMATCH wxID_HIGHEST + 10
+#define ID_BORDER_AUTOMATCH_OPAQUE wxID_HIGHEST + 10
+#define ID_BORDER_AUTOMATCH_REVERSE wxID_HIGHEST + 14
+#define ID_MAIN_NOTEBOOK wxID_HIGHEST + 15
+#define ID_BORDER_MATCH_PICK_OPAQUE wxID_HIGHEST + 11
+#define ID_BORDER_MATCH_PICK_TRANSPARENT wxID_HIGHEST + 12
+#define ID_BORDER_MATCH_REROLL wxID_HIGHEST + 13
 
 namespace {
 
@@ -254,7 +260,17 @@ void ensureEdgeMasks() {
 
 constexpr int kTileHalf = SPRITE_PIXELS / 2;
 constexpr int kCornerCell = SPRITE_PIXELS / 4;
+constexpr int kOuterBand = 8;
 constexpr int kQuadrantActiveMin = 10;
+constexpr double kCoverageMedium = 0.45;
+constexpr double kCoverageOverfilled = 0.75;
+constexpr int kReverseMinCornerSignal = 6;
+constexpr int kReverseMinQuadrantSignal = 20;
+constexpr int kReverseMinEdgeStrip = 12;
+
+bool g_preferTransparentMatching = false;
+bool g_useReverseMatching = false;
+BorderAutoMatchForceMode g_forceMatchMode = BorderAutoMatchForceMode::Auto;
 
 struct TileRegions {
 	int quadrant[4] = {};
@@ -264,6 +280,19 @@ struct TileRegions {
 	int halfWest = 0;
 	int halfEast = 0;
 	int activeQuadrants = 0;
+};
+
+struct TransparencyProfile {
+	int quadrant[4] = {};
+	int corner8[4] = {};
+	int halfNorth = 0;
+	int halfSouth = 0;
+	int halfWest = 0;
+	int halfEast = 0;
+	int outerRing = 0;
+	int totalTransparent = 0;
+	int dominantTransparentQuadrant = 0;
+	int activeTransparentQuadrants = 0;
 };
 
 TileRegions computeTileRegions(const BorderSpriteAnalysis& sprite) {
@@ -318,6 +347,363 @@ TileRegions computeTileRegions(const BorderSpriteAnalysis& sprite) {
 		}
 	}
 	return regions;
+}
+
+TransparencyProfile computeTransparencyProfile(const BorderSpriteAnalysis& sprite) {
+	TransparencyProfile profile;
+	for (int y = 0; y < SPRITE_PIXELS; ++y) {
+		for (int x = 0; x < SPRITE_PIXELS; ++x) {
+			if (sprite.contentMask[y * SPRITE_PIXELS + x] != 0) {
+				continue;
+			}
+
+			profile.totalTransparent++;
+
+			const bool topHalf = y < kTileHalf;
+			const bool leftHalf = x < kTileHalf;
+			int quadrantIndex = 0;
+			if (topHalf && leftHalf) {
+				quadrantIndex = 0;
+			} else if (topHalf && !leftHalf) {
+				quadrantIndex = 1;
+			} else if (!topHalf && leftHalf) {
+				quadrantIndex = 2;
+			} else {
+				quadrantIndex = 3;
+			}
+			profile.quadrant[quadrantIndex]++;
+
+			if (x < kCornerCell && y < kCornerCell) {
+				profile.corner8[0]++;
+			}
+			if (x >= SPRITE_PIXELS - kCornerCell && y < kCornerCell) {
+				profile.corner8[1]++;
+			}
+			if (x < kCornerCell && y >= SPRITE_PIXELS - kCornerCell) {
+				profile.corner8[2]++;
+			}
+			if (x >= SPRITE_PIXELS - kCornerCell && y >= SPRITE_PIXELS - kCornerCell) {
+				profile.corner8[3]++;
+			}
+
+			if (topHalf) {
+				profile.halfNorth++;
+			} else {
+				profile.halfSouth++;
+			}
+			if (leftHalf) {
+				profile.halfWest++;
+			} else {
+				profile.halfEast++;
+			}
+
+			const int distEdge = std::min(std::min(x, SPRITE_PIXELS - 1 - x), std::min(y, SPRITE_PIXELS - 1 - y));
+			if (distEdge < kOuterBand) {
+				profile.outerRing++;
+			}
+		}
+	}
+
+	int bestTransparent = -1;
+	for (int quadrantIndex = 0; quadrantIndex < 4; ++quadrantIndex) {
+		if (profile.quadrant[quadrantIndex] >= kQuadrantActiveMin) {
+			profile.activeTransparentQuadrants++;
+		}
+		if (profile.quadrant[quadrantIndex] > bestTransparent) {
+			bestTransparent = profile.quadrant[quadrantIndex];
+			profile.dominantTransparentQuadrant = quadrantIndex;
+		}
+	}
+	return profile;
+}
+
+struct EdgeStripTransparency {
+	int top = 0;
+	int bottom = 0;
+	int left = 0;
+	int right = 0;
+};
+
+EdgeStripTransparency computeEdgeStripTransparency(const BorderSpriteAnalysis& sprite) {
+	EdgeStripTransparency strips;
+	for (int y = 0; y < SPRITE_PIXELS; ++y) {
+		for (int x = 0; x < SPRITE_PIXELS; ++x) {
+		 if (sprite.contentMask[y * SPRITE_PIXELS + x] != 0) {
+				continue;
+			}
+			if (y < kOuterBand) {
+				strips.top++;
+			}
+			if (y >= SPRITE_PIXELS - kOuterBand) {
+				strips.bottom++;
+			}
+			if (x < kOuterBand) {
+				strips.left++;
+			}
+			if (x >= SPRITE_PIXELS - kOuterBand) {
+				strips.right++;
+			}
+		}
+	}
+	return strips;
+}
+
+enum ReverseSpriteKind {
+	REVERSE_UNKNOWN = 0,
+	REVERSE_BANANA,
+	REVERSE_CHIP,
+	REVERSE_SIDE,
+};
+
+struct ReverseSpriteMatch {
+	ReverseSpriteKind kind = REVERSE_UNKNOWN;
+	BorderEdgePosition edge = EDGE_NONE;
+	double confidence = 0.0;
+};
+
+int secondLargestIn4(const int values[4], int skipIndex) {
+	int best = -1;
+	for (int index = 0; index < 4; ++index) {
+		if (index == skipIndex) {
+			continue;
+		}
+		best = std::max(best, values[index]);
+	}
+	return best;
+}
+
+BorderEdgePosition bananaEdgeFromCornerIndex(int cornerIndex) {
+	static const BorderEdgePosition kEdges[] = { EDGE_CNW, EDGE_CNE, EDGE_CSW, EDGE_CSE };
+	return kEdges[cornerIndex];
+}
+
+BorderEdgePosition chipEdgeFromEmptyQuadrant(int quadrantIndex) {
+	static const BorderEdgePosition kEdges[] = { EDGE_DSE, EDGE_DSW, EDGE_DNE, EDGE_DNW };
+	return kEdges[quadrantIndex];
+}
+
+BorderEdgePosition sideEdgeFromDominantStrip(int stripIndex) {
+	// Transparent on one edge => sprite belongs on the opposite border slot.
+	static const BorderEdgePosition kEdges[] = { EDGE_S, EDGE_N, EDGE_E, EDGE_W };
+	return kEdges[stripIndex];
+}
+
+int quadrantIndexFromPoint(int x, int y) {
+	const bool top = y < kTileHalf;
+	const bool left = x < kTileHalf;
+	if (top && left) {
+		return 0;
+	}
+	if (top && !left) {
+		return 1;
+	}
+	if (!top && left) {
+		return 2;
+	}
+	return 3;
+}
+
+struct TransparentBlob {
+	int size = 0;
+	int minX = SPRITE_PIXELS;
+	int minY = SPRITE_PIXELS;
+	int maxX = 0;
+	int maxY = 0;
+};
+
+TransparentBlob findLargestTransparentBlob(const BorderSpriteAnalysis& analysis) {
+	TransparentBlob best;
+	uint8_t visited[SPRITE_PIXELS_SIZE] = {};
+	const int deltaX[] = { -1, 1, 0, 0 };
+	const int deltaY[] = { 0, 0, -1, 1 };
+
+	for (int startY = 0; startY < SPRITE_PIXELS; ++startY) {
+		for (int startX = 0; startX < SPRITE_PIXELS; ++startX) {
+			const int startIndex = startY * SPRITE_PIXELS + startX;
+			if (analysis.contentMask[startIndex] != 0 || visited[startIndex] != 0) {
+				continue;
+			}
+
+			TransparentBlob blob;
+			std::vector<int> open;
+			open.push_back(startIndex);
+			visited[startIndex] = 1;
+
+			while (!open.empty()) {
+				const int index = open.back();
+				open.pop_back();
+				const int x = index % SPRITE_PIXELS;
+				const int y = index / SPRITE_PIXELS;
+
+				blob.size++;
+				blob.minX = std::min(blob.minX, x);
+				blob.maxX = std::max(blob.maxX, x);
+				blob.minY = std::min(blob.minY, y);
+				blob.maxY = std::max(blob.maxY, y);
+
+				for (int direction = 0; direction < 4; ++direction) {
+					const int nx = x + deltaX[direction];
+					const int ny = y + deltaY[direction];
+					if (nx < 0 || ny < 0 || nx >= SPRITE_PIXELS || ny >= SPRITE_PIXELS) {
+						continue;
+					}
+					const int neighborIndex = ny * SPRITE_PIXELS + nx;
+					if (analysis.contentMask[neighborIndex] != 0 || visited[neighborIndex] != 0) {
+						continue;
+					}
+					visited[neighborIndex] = 1;
+					open.push_back(neighborIndex);
+				}
+			}
+
+			if (blob.size > best.size) {
+				best = blob;
+			}
+		}
+	}
+	return best;
+}
+
+BorderEdgePosition chipEdgeFromBlob(const TransparentBlob& blob) {
+	if (blob.size <= 0) {
+		return EDGE_NONE;
+	}
+	const int centerX = (blob.minX + blob.maxX) / 2;
+	const int centerY = (blob.minY + blob.maxY) / 2;
+	return chipEdgeFromEmptyQuadrant(quadrantIndexFromPoint(centerX, centerY));
+}
+
+ReverseSpriteMatch classifyReverseSprite(const BorderSpriteAnalysis& analysis) {
+	ReverseSpriteMatch result;
+	const TileRegions opaque = computeTileRegions(analysis);
+	const TransparencyProfile trans = computeTransparencyProfile(analysis);
+	const EdgeStripTransparency strips = computeEdgeStripTransparency(analysis);
+	const TransparentBlob largestBlob = findLargestTransparentBlob(analysis);
+	const int corner8Area = kCornerCell * kCornerCell;
+	const int quadrantArea = kTileHalf * kTileHalf;
+	const int stripArea = kOuterBand * SPRITE_PIXELS;
+
+	const int stripCounts[4] = { strips.top, strips.bottom, strips.left, strips.right };
+	int bestStrip = 0;
+	int bestStripCount = -1;
+	for (int stripIndex = 0; stripIndex < 4; ++stripIndex) {
+		if (stripCounts[stripIndex] > bestStripCount) {
+			bestStripCount = stripCounts[stripIndex];
+			bestStrip = stripIndex;
+		}
+	}
+	const int secondStripCount = secondLargestIn4(stripCounts, bestStrip);
+
+	int bestQuadrant = 0;
+	int bestQuadrantTransparent = -1;
+	for (int quadrantIndex = 0; quadrantIndex < 4; ++quadrantIndex) {
+		if (trans.quadrant[quadrantIndex] > bestQuadrantTransparent) {
+			bestQuadrantTransparent = trans.quadrant[quadrantIndex];
+			bestQuadrant = quadrantIndex;
+		}
+	}
+	const int secondQuadrantTransparent = secondLargestIn4(trans.quadrant, bestQuadrant);
+
+	const int horizontalStrip = strips.left + strips.right;
+	const int verticalStrip = strips.top + strips.bottom;
+	const bool dominantSideStrip = bestStripCount >= kReverseMinEdgeStrip
+		&& bestStripCount >= secondStripCount + kReverseMinEdgeStrip / 2
+		&& trans.activeTransparentQuadrants >= 2
+		&& ((bestStrip <= 1 && verticalStrip >= horizontalStrip)
+			|| (bestStrip >= 2 && horizontalStrip >= verticalStrip));
+
+	// 1) Side (N/E/S/W) - dominant transparent band along one edge strip.
+	if (dominantSideStrip) {
+		result.kind = REVERSE_SIDE;
+		result.edge = sideEdgeFromDominantStrip(bestStrip);
+		result.confidence = static_cast<double>(bestStripCount) / stripArea;
+		return result;
+	}
+
+	// 2) Chip (D) - dominant transparent quadrant / connected pocket (~empty quarter).
+	if (bestQuadrantTransparent >= kReverseMinQuadrantSignal
+		&& bestQuadrantTransparent >= secondQuadrantTransparent + kReverseMinQuadrantSignal / 3
+		&& trans.activeTransparentQuadrants == 1) {
+		BorderEdgePosition chipEdge = chipEdgeFromEmptyQuadrant(bestQuadrant);
+		if (largestBlob.size >= kReverseMinQuadrantSignal / 2) {
+			const BorderEdgePosition blobEdge = chipEdgeFromBlob(largestBlob);
+			if (blobEdge != EDGE_NONE) {
+				chipEdge = blobEdge;
+			}
+		}
+		result.kind = REVERSE_CHIP;
+		result.edge = chipEdge;
+		result.confidence = static_cast<double>(bestQuadrantTransparent) / quadrantArea;
+		return result;
+	}
+
+	if (largestBlob.size >= kReverseMinQuadrantSignal
+		&& largestBlob.size >= secondQuadrantTransparent + kReverseMinQuadrantSignal / 3
+		&& largestBlob.size > bestStripCount
+		&& trans.activeTransparentQuadrants <= 2) {
+		result.kind = REVERSE_CHIP;
+		result.edge = chipEdgeFromBlob(largestBlob);
+		if (result.edge != EDGE_NONE) {
+			result.confidence = static_cast<double>(largestBlob.size) / quadrantArea;
+			return result;
+		}
+	}
+
+	// 3) Side fallback when strip signal is present but not axis-dominant.
+	if (bestStripCount >= kReverseMinEdgeStrip
+		&& bestStripCount >= secondStripCount + kReverseMinEdgeStrip / 2
+		&& bestStripCount >= bestQuadrantTransparent / 2
+		&& trans.activeTransparentQuadrants >= 2) {
+		result.kind = REVERSE_SIDE;
+		result.edge = sideEdgeFromDominantStrip(bestStrip);
+		result.confidence = static_cast<double>(bestStripCount) / stripArea;
+		return result;
+	}
+
+	// 4) Banana (C) - smallest 8x8 corner probe; never when a chip-sized quarter exists.
+	if (bestQuadrantTransparent >= kReverseMinQuadrantSignal) {
+		return result;
+	}
+
+	if (analysis.fillRatio >= kCoverageOverfilled) {
+		int bestCorner = 0;
+		int bestCornerTransparent = -1;
+		for (int cornerIndex = 0; cornerIndex < 4; ++cornerIndex) {
+			if (trans.corner8[cornerIndex] > bestCornerTransparent) {
+				bestCornerTransparent = trans.corner8[cornerIndex];
+				bestCorner = cornerIndex;
+			}
+		}
+		const int secondCornerTransparent = secondLargestIn4(trans.corner8, bestCorner);
+		if (bestCornerTransparent >= kReverseMinCornerSignal
+			&& bestCornerTransparent >= secondCornerTransparent + 2
+			&& bestCornerTransparent < kReverseMinQuadrantSignal) {
+			result.kind = REVERSE_BANANA;
+			result.edge = bananaEdgeFromCornerIndex(bestCorner);
+			result.confidence = static_cast<double>(bestCornerTransparent) / corner8Area;
+			return result;
+		}
+	} else {
+		int bestCorner = 0;
+		int bestCornerOpaque = -1;
+		for (int cornerIndex = 0; cornerIndex < 4; ++cornerIndex) {
+			if (opaque.corner8[cornerIndex] > bestCornerOpaque) {
+				bestCornerOpaque = opaque.corner8[cornerIndex];
+				bestCorner = cornerIndex;
+			}
+		}
+		const int secondCornerOpaque = secondLargestIn4(opaque.corner8, bestCorner);
+		if (bestCornerOpaque >= kReverseMinCornerSignal
+			&& bestCornerOpaque >= secondCornerOpaque + 2
+			&& analysis.contentCount <= quadrantArea) {
+			result.kind = REVERSE_BANANA;
+			result.edge = bananaEdgeFromCornerIndex(bestCorner);
+			result.confidence = static_cast<double>(bestCornerOpaque) / std::max(1, analysis.contentCount);
+			return result;
+		}
+	}
+
+	return result;
 }
 
 bool spriteRegionContains(BorderEdgePosition edge, int x, int y) {
@@ -543,8 +929,26 @@ bool analyzeBorderSprite(uint16_t itemId, BorderSpriteAnalysis& out, bool ignore
 }
 
 bool isLikelyFullGroundTile(const BorderSpriteAnalysis& analysis) {
-	// Only reject obvious full ground fills, not partial border pieces.
-	return analysis.fillRatio > 0.72 && analysis.centerDensity > 0.65;
+	if (analysis.fillRatio <= 0.93 || analysis.centerDensity <= 0.88) {
+		return false;
+	}
+	// Keep overfilled border pieces that still have chip/side-sized transparent gaps.
+	const TransparencyProfile trans = computeTransparencyProfile(analysis);
+	int maxQuadrantTransparent = 0;
+	for (int quadrantIndex = 0; quadrantIndex < 4; ++quadrantIndex) {
+		maxQuadrantTransparent = std::max(maxQuadrantTransparent, trans.quadrant[quadrantIndex]);
+	}
+	if (maxQuadrantTransparent >= kReverseMinQuadrantSignal) {
+		return false;
+	}
+	const EdgeStripTransparency strips = computeEdgeStripTransparency(analysis);
+	const int maxStrip = std::max(
+		std::max(strips.top, strips.bottom),
+		std::max(strips.left, strips.right));
+	if (maxStrip >= kReverseMinEdgeStrip * 2) {
+		return false;
+	}
+	return true;
 }
 
 double regionOverlapScore(const BorderSpriteAnalysis& sprite, BorderEdgePosition edge) {
@@ -568,21 +972,129 @@ double regionOverlapScore(const BorderSpriteAnalysis& sprite, BorderEdgePosition
 		case EDGE_S:
 		case EDGE_E:
 		case EDGE_W:
-			// Cardinals only occupy one half (16px); penalize pixels outside that half.
 			return static_cast<double>(inside) - outside * 0.65;
 		default:
 			return static_cast<double>(inside);
 	}
 }
 
+double regionTransparencyScore(const BorderSpriteAnalysis& sprite, BorderEdgePosition edge) {
+	int transparentInGap = 0;
+	int opaqueInZone = 0;
+	int opaqueSpill = 0;
+	for (int y = 0; y < SPRITE_PIXELS; ++y) {
+		for (int x = 0; x < SPRITE_PIXELS; ++x) {
+			const bool opaque = sprite.contentMask[y * SPRITE_PIXELS + x] != 0;
+			const bool inExpectedOpaque = spriteRegionContains(edge, x, y);
+			if (inExpectedOpaque) {
+				if (opaque) {
+					opaqueInZone++;
+				}
+			} else if (!opaque) {
+				transparentInGap++;
+			} else {
+				opaqueSpill++;
+			}
+		}
+	}
+
+	switch (edge) {
+		case EDGE_N:
+		case EDGE_S:
+		case EDGE_E:
+		case EDGE_W:
+			return transparentInGap + opaqueInZone * 0.35 - opaqueSpill * 0.65;
+		default:
+			return transparentInGap + opaqueInZone * 0.25 - opaqueSpill * 0.35;
+	}
+}
+
+double reverseEdgeScore(const BorderSpriteAnalysis& analysis, BorderEdgePosition edge) {
+	const ReverseSpriteMatch match = classifyReverseSprite(analysis);
+	if (match.edge == edge) {
+		return 100.0 + match.confidence * 400.0;
+	}
+	return regionTransparencyScore(analysis, edge);
+}
+
 double edgeCoverageScore(const BorderSpriteAnalysis& analysis, BorderEdgePosition edge) {
-	return regionOverlapScore(analysis, edge);
+	const double opaqueScore = regionOverlapScore(analysis, edge);
+	const double transparentScore = regionTransparencyScore(analysis, edge);
+
+	if (g_forceMatchMode == BorderAutoMatchForceMode::OpaqueOnly) {
+		return opaqueScore;
+	}
+	if (g_forceMatchMode == BorderAutoMatchForceMode::TransparentOnly || g_useReverseMatching) {
+		return reverseEdgeScore(analysis, edge);
+	}
+
+	const double coverage = analysis.fillRatio;
+	if (g_preferTransparentMatching || coverage >= kCoverageOverfilled) {
+		return transparentScore;
+	}
+	if (coverage >= kCoverageMedium) {
+		return opaqueScore * 0.6 + transparentScore * 0.4;
+	}
+	return opaqueScore;
 }
 
 struct ScoredCandidate {
 	BorderSpriteAnalysis analysis;
 	double edgeScores[EDGE_COUNT] = {};
 };
+
+void applyReverseDirectAssignments(
+	const std::vector<ScoredCandidate>& candidates,
+	std::map<BorderEdgePosition, uint16_t>& outMatches) {
+	struct AssignmentCandidate {
+		double confidence;
+		uint16_t itemId;
+		BorderEdgePosition edge;
+	};
+
+	std::vector<AssignmentCandidate> assignments;
+	assignments.reserve(candidates.size());
+	for (const ScoredCandidate& candidate : candidates) {
+		const ReverseSpriteMatch match = classifyReverseSprite(candidate.analysis);
+		if (match.edge == EDGE_NONE || match.confidence < 0.04) {
+			continue;
+		}
+		assignments.push_back({
+			match.confidence,
+			candidate.analysis.itemId,
+			match.edge,
+		});
+	}
+
+	std::sort(assignments.begin(), assignments.end(), [](const AssignmentCandidate& a, const AssignmentCandidate& b) {
+		return a.confidence > b.confidence;
+	});
+
+	std::set<uint16_t> usedItems;
+	std::set<BorderEdgePosition> usedEdges;
+	for (const AssignmentCandidate& assignment : assignments) {
+		if (usedItems.count(assignment.itemId) != 0 || usedEdges.count(assignment.edge) != 0) {
+			continue;
+		}
+		outMatches[assignment.edge] = assignment.itemId;
+		usedItems.insert(assignment.itemId);
+		usedEdges.insert(assignment.edge);
+	}
+}
+
+bool detectOverfilledCandidateSet(const std::vector<ScoredCandidate>& candidates) {
+	if (candidates.empty()) {
+		return false;
+	}
+
+	int overfilledCount = 0;
+	for (const ScoredCandidate& candidate : candidates) {
+		if (candidate.analysis.fillRatio >= kCoverageOverfilled) {
+			overfilledCount++;
+		}
+	}
+	return overfilledCount * 2 >= static_cast<int>(candidates.size());
+}
 
 void assignOverlayGroup(
 	const std::vector<const ScoredCandidate*>& pool,
@@ -612,7 +1124,21 @@ void assignOverlayGroup(
 		} while (std::next_permutation(perm.begin(), perm.end()));
 
 		for (size_t edgeIndex = 0; edgeIndex < edgeCount; ++edgeIndex) {
-			outMatches[edges[edgeIndex]] = pool[bestPerm[edgeIndex]]->analysis.itemId;
+			if (outMatches.count(edges[edgeIndex]) != 0) {
+				continue;
+			}
+			const uint16_t itemId = pool[bestPerm[edgeIndex]]->analysis.itemId;
+			bool alreadyUsed = false;
+			for (const auto& entry : outMatches) {
+				if (entry.second == itemId) {
+					alreadyUsed = true;
+					break;
+				}
+			}
+			if (alreadyUsed) {
+				continue;
+			}
+			outMatches[edges[edgeIndex]] = itemId;
 		}
 		return;
 	}
@@ -646,6 +1172,9 @@ void assignOverlayGroup(
 		if (usedEdges.count(pair.edge) != 0 || usedItems.count(pair.itemId) != 0) {
 			continue;
 		}
+		if (outMatches.count(pair.edge) != 0) {
+			continue;
+		}
 		outMatches[pair.edge] = pair.itemId;
 		usedEdges.insert(pair.edge);
 		usedItems.insert(pair.itemId);
@@ -653,7 +1182,7 @@ void assignOverlayGroup(
 
 	for (size_t edgeIndex = 0; edgeIndex < edgeCount; ++edgeIndex) {
 		const BorderEdgePosition edge = edges[edgeIndex];
-		if (usedEdges.count(edge) != 0) {
+		if (usedEdges.count(edge) != 0 || outMatches.count(edge) != 0) {
 			continue;
 		}
 
@@ -704,7 +1233,44 @@ int maxCorner8Count(const TileRegions& regions) {
 	return std::max(std::max(regions.corner8[0], regions.corner8[1]), std::max(regions.corner8[2], regions.corner8[3]));
 }
 
-SpriteTier classifySpriteTier(const ScoredCandidate& candidate) {
+int maxTransparentHalf(const TransparencyProfile& profile) {
+	return std::max(std::max(profile.halfNorth, profile.halfSouth), std::max(profile.halfWest, profile.halfEast));
+}
+
+SpriteTier classifySpriteTier(const ScoredCandidate& candidate, bool useTransparentMatching) {
+	if (g_useReverseMatching || useTransparentMatching || candidate.analysis.fillRatio >= kCoverageOverfilled) {
+		const ReverseSpriteMatch reverseMatch = classifyReverseSprite(candidate.analysis);
+		switch (reverseMatch.kind) {
+			case REVERSE_BANANA:
+				return TIER_CORNER;
+			case REVERSE_CHIP:
+				return TIER_DIAGONAL;
+			case REVERSE_SIDE:
+				return TIER_CARDINAL;
+			default:
+				break;
+		}
+	}
+
+	if (useTransparentMatching || candidate.analysis.fillRatio >= kCoverageOverfilled) {
+		const TransparencyProfile transparency = computeTransparencyProfile(candidate.analysis);
+		const int maxHalfTransparent = maxTransparentHalf(transparency);
+
+		if (transparency.activeTransparentQuadrants == 1
+			&& transparency.quadrant[transparency.dominantTransparentQuadrant] >= kQuadrantActiveMin * 2) {
+			const int dominant = transparency.quadrant[transparency.dominantTransparentQuadrant];
+			if (maxHalfTransparent <= dominant + kQuadrantActiveMin) {
+				return TIER_DIAGONAL;
+			}
+		}
+
+		if (maxHalfTransparent >= kQuadrantActiveMin * 2) {
+			return TIER_CARDINAL;
+		}
+
+		return TIER_CORNER;
+	}
+
 	const TileRegions regions = computeTileRegions(candidate.analysis);
 	if (regions.activeQuadrants >= 3) {
 		return TIER_DIAGONAL;
@@ -721,6 +1287,7 @@ SpriteTier classifySpriteTier(const ScoredCandidate& candidate) {
 void buildTierPools(
 	const std::vector<ScoredCandidate>& candidates,
 	int rangeIdCount,
+	bool useTransparentMatching,
 	std::vector<const ScoredCandidate*>& cornerPool,
 	std::vector<const ScoredCandidate*>& cardinalPool,
 	std::vector<const ScoredCandidate*>& diagonalPool) {
@@ -735,39 +1302,72 @@ void buildTierPools(
 	struct RankedCandidate {
 		const ScoredCandidate* candidate;
 		TileRegions regions;
+		TransparencyProfile transparency;
 	};
 
 	std::vector<RankedCandidate> ranked;
 	ranked.reserve(candidates.size());
 	for (const ScoredCandidate& candidate : candidates) {
-		ranked.push_back({&candidate, computeTileRegions(candidate.analysis)});
+		ranked.push_back({
+			&candidate,
+			computeTileRegions(candidate.analysis),
+			computeTransparencyProfile(candidate.analysis),
+		});
 	}
 
-	for (const RankedCandidate& entry : ranked) {
-		if (entry.regions.activeQuadrants >= 3) {
-			diagonalPool.push_back(entry.candidate);
+	if (useTransparentMatching) {
+		for (const RankedCandidate& entry : ranked) {
+			if (classifySpriteTier(*entry.candidate, true) == TIER_DIAGONAL) {
+				diagonalPool.push_back(entry.candidate);
+			}
 		}
-	}
 
-	std::vector<RankedCandidate> nonDiagonal;
-	for (const RankedCandidate& entry : ranked) {
-		if (entry.regions.activeQuadrants < 3) {
-			nonDiagonal.push_back(entry);
+		std::vector<RankedCandidate> nonDiagonal;
+		for (const RankedCandidate& entry : ranked) {
+			if (classifySpriteTier(*entry.candidate, true) != TIER_DIAGONAL) {
+				nonDiagonal.push_back(entry);
+			}
 		}
-	}
 
-	std::sort(nonDiagonal.begin(), nonDiagonal.end(), [](const RankedCandidate& a, const RankedCandidate& b) {
-		return a.candidate->analysis.contentCount < b.candidate->analysis.contentCount;
-	});
+		std::sort(nonDiagonal.begin(), nonDiagonal.end(), [](const RankedCandidate& a, const RankedCandidate& b) {
+			return a.candidate->analysis.contentCount < b.candidate->analysis.contentCount;
+		});
 
-	const bool standardTwelvePieceSet = rangeIdCount >= 12;
-	const int cornerTarget = (standardTwelvePieceSet && candidates.size() >= 12) ? 4 : static_cast<int>(nonDiagonal.size() / 2);
+		const bool standardTwelvePieceSet = rangeIdCount >= 12;
+		const int cornerTarget = (standardTwelvePieceSet && candidates.size() >= 12) ? 4 : static_cast<int>(nonDiagonal.size() / 2);
+		for (size_t index = 0; index < nonDiagonal.size(); ++index) {
+			if (static_cast<int>(cornerPool.size()) < cornerTarget) {
+				cornerPool.push_back(nonDiagonal[index].candidate);
+			} else {
+				cardinalPool.push_back(nonDiagonal[index].candidate);
+			}
+		}
+	} else {
+		for (const RankedCandidate& entry : ranked) {
+			if (entry.regions.activeQuadrants >= 3) {
+				diagonalPool.push_back(entry.candidate);
+			}
+		}
 
-	for (size_t index = 0; index < nonDiagonal.size(); ++index) {
-		if (static_cast<int>(cornerPool.size()) < cornerTarget) {
-			cornerPool.push_back(nonDiagonal[index].candidate);
-		} else {
-			cardinalPool.push_back(nonDiagonal[index].candidate);
+		std::vector<RankedCandidate> nonDiagonal;
+		for (const RankedCandidate& entry : ranked) {
+			if (entry.regions.activeQuadrants < 3) {
+				nonDiagonal.push_back(entry);
+			}
+		}
+
+		std::sort(nonDiagonal.begin(), nonDiagonal.end(), [](const RankedCandidate& a, const RankedCandidate& b) {
+			return a.candidate->analysis.contentCount < b.candidate->analysis.contentCount;
+		});
+
+		const bool standardTwelvePieceSet = rangeIdCount >= 12;
+		const int cornerTarget = (standardTwelvePieceSet && candidates.size() >= 12) ? 4 : static_cast<int>(nonDiagonal.size() / 2);
+		for (size_t index = 0; index < nonDiagonal.size(); ++index) {
+			if (static_cast<int>(cornerPool.size()) < cornerTarget) {
+				cornerPool.push_back(nonDiagonal[index].candidate);
+			} else {
+				cardinalPool.push_back(nonDiagonal[index].candidate);
+			}
 		}
 	}
 
@@ -810,13 +1410,18 @@ void buildTierPools(
 		double bestScore = 1e9;
 		for (const ScoredCandidate* candidate : *pools[overTier]) {
 			const TileRegions regions = computeTileRegions(candidate->analysis);
+			const TransparencyProfile transparency = computeTransparencyProfile(candidate->analysis);
 			double score = 0.0;
 			if (overTier == TIER_DIAGONAL) {
-				score = static_cast<double>(regions.activeQuadrants);
+				score = useTransparentMatching
+					? static_cast<double>(transparency.activeTransparentQuadrants)
+					: static_cast<double>(regions.activeQuadrants);
 			} else if (overTier == TIER_CORNER) {
 				score = static_cast<double>(candidate->analysis.contentCount);
 			} else {
-				score = -static_cast<double>(maxCorner8Count(regions));
+				score = useTransparentMatching
+					? -static_cast<double>(maxTransparentHalf(transparency))
+					: -static_cast<double>(maxCorner8Count(regions));
 			}
 			if (bestMove == nullptr || score < bestScore) {
 				bestMove = candidate;
@@ -909,7 +1514,7 @@ void fillRemainingMatches(
 			if (usedItems.count(candidate->analysis.itemId) != 0) {
 				continue;
 			}
-			if (classifySpriteTier(*candidate) == tier) {
+			if (classifySpriteTier(*candidate, g_preferTransparentMatching || g_useReverseMatching) == tier) {
 				tierAvailable.push_back(candidate);
 			}
 		}
@@ -993,10 +1598,20 @@ void fillRemainingMatches(
 	}
 }
 
-bool autoMatchBorderSprites(uint16_t seedItemId, int minItemId, int maxItemId, uint16_t groundItemId, std::map<BorderEdgePosition, uint16_t>& outMatches, wxString& summary) {
+bool autoMatchBorderSprites(
+	uint16_t seedItemId,
+	int minItemId,
+	int maxItemId,
+	uint16_t groundItemId,
+	BorderAutoMatchForceMode forceMode,
+	std::map<BorderEdgePosition, uint16_t>& outMatches,
+	wxString& summary) {
 	outMatches.clear();
 	(void)seedItemId;
 	g_edgeMasksReady = false;
+	g_forceMatchMode = forceMode;
+	g_preferTransparentMatching = false;
+	g_useReverseMatching = false;
 	loadGroundReference(groundItemId);
 
 	minItemId = std::max(1, minItemId);
@@ -1024,11 +1639,6 @@ bool autoMatchBorderSprites(uint16_t seedItemId, int minItemId, int maxItemId, u
 			continue;
 		}
 
-		for (int edgeIndex = EDGE_N; edgeIndex < EDGE_COUNT; ++edgeIndex) {
-			const BorderEdgePosition edge = static_cast<BorderEdgePosition>(edgeIndex);
-			scored.edgeScores[edgeIndex] = edgeCoverageScore(scored.analysis, edge);
-		}
-
 		candidates.push_back(scored);
 	}
 
@@ -1037,6 +1647,36 @@ bool autoMatchBorderSprites(uint16_t seedItemId, int minItemId, int maxItemId, u
 			"No border-like sprites found in IDs %d to %d (%d full-tile sprites skipped).",
 			minItemId, maxItemId, skippedFullTiles);
 		return false;
+	}
+
+	g_preferTransparentMatching = detectOverfilledCandidateSet(candidates);
+	bool useTransparentPools = g_preferTransparentMatching;
+	wxString matchMode = wxString("8x8/16x16 region match (auto)");
+
+	if (forceMode == BorderAutoMatchForceMode::OpaqueOnly) {
+		g_preferTransparentMatching = false;
+		useTransparentPools = false;
+		matchMode = wxString("8x8/16x16 opaque region match");
+	} else if (forceMode == BorderAutoMatchForceMode::TransparentOnly) {
+		g_preferTransparentMatching = true;
+		g_useReverseMatching = true;
+		useTransparentPools = true;
+		matchMode = wxString("reverse banana/chip/side match");
+	} else if (g_preferTransparentMatching) {
+		matchMode = wxString("reverse banana/chip/side match (auto)");
+		g_useReverseMatching = true;
+		useTransparentPools = true;
+	}
+
+	for (ScoredCandidate& scored : candidates) {
+		for (int edgeIndex = EDGE_N; edgeIndex < EDGE_COUNT; ++edgeIndex) {
+			const BorderEdgePosition edge = static_cast<BorderEdgePosition>(edgeIndex);
+			scored.edgeScores[edgeIndex] = edgeCoverageScore(scored.analysis, edge);
+		}
+	}
+
+	if (g_useReverseMatching) {
+		applyReverseDirectAssignments(candidates, outMatches);
 	}
 
 	static const BorderEdgePosition kCornerEdges[] = {
@@ -1052,7 +1692,7 @@ bool autoMatchBorderSprites(uint16_t seedItemId, int minItemId, int maxItemId, u
 	std::vector<const ScoredCandidate*> cornerPool;
 	std::vector<const ScoredCandidate*> cardinalPool;
 	std::vector<const ScoredCandidate*> diagonalPool;
-	buildTierPools(candidates, rangeIdCount, cornerPool, cardinalPool, diagonalPool);
+	buildTierPools(candidates, rangeIdCount, useTransparentPools, cornerPool, cardinalPool, diagonalPool);
 
 	assignOverlayGroup(cornerPool, kCornerEdges, sizeof(kCornerEdges) / sizeof(kCornerEdges[0]), outMatches);
 	assignOverlayGroup(cardinalPool, kCardinalEdges, sizeof(kCardinalEdges) / sizeof(kCardinalEdges[0]), outMatches);
@@ -1065,6 +1705,7 @@ bool autoMatchBorderSprites(uint16_t seedItemId, int minItemId, int maxItemId, u
 	}
 
 	const int expectedEdges = EDGE_COUNT - EDGE_N;
+
 	if (outMatches.size() < static_cast<size_t>(expectedEdges)) {
 		wxString missing;
 		for (int edgeIndex = EDGE_N; edgeIndex < EDGE_COUNT; ++edgeIndex) {
@@ -1077,17 +1718,28 @@ bool autoMatchBorderSprites(uint16_t seedItemId, int minItemId, int maxItemId, u
 			}
 		}
 		summary = wxString::Format(
-			"Auto-matched %zu/%d border pieces (8x8/16x16 region match) in IDs %d to %d (%d full tiles skipped). Still empty: %s",
-			outMatches.size(), expectedEdges, minItemId, maxItemId, skippedFullTiles, missing);
+			"Auto-matched %zu/%d border pieces (%s) in IDs %d to %d (%d full tiles skipped). Still empty: %s",
+			outMatches.size(), expectedEdges, matchMode, minItemId, maxItemId, skippedFullTiles, missing);
 	} else {
 		summary = wxString::Format(
-			"Auto-matched %zu/%d border pieces (8x8/16x16 region match) in IDs %d to %d (%d full tiles skipped).",
-			outMatches.size(), expectedEdges, minItemId, maxItemId, skippedFullTiles);
+			"Auto-matched %zu/%d border pieces (%s) in IDs %d to %d (%d full tiles skipped).",
+			outMatches.size(), expectedEdges, matchMode, minItemId, maxItemId, skippedFullTiles);
 	}
 	return true;
 }
 
 } // namespace
+
+bool AutoMatchBorderSprites(
+	uint16_t seedItemId,
+	int minItemId,
+	int maxItemId,
+	uint16_t groundItemId,
+	BorderAutoMatchForceMode forceMode,
+	std::map<BorderEdgePosition, uint16_t>& outMatches,
+	wxString& summary) {
+	return autoMatchBorderSprites(seedItemId, minItemId, maxItemId, groundItemId, forceMode, outMatches, summary);
+}
 
 const BorderGridCell BorderGridPanel::s_edgeCells[9] = {
     BorderGridCell(EDGE_CNW, EDGE_DNW),
@@ -1225,7 +1877,7 @@ BEGIN_EVENT_TABLE(BorderEditorDialog, wxDialog)
     EVT_BUTTON(wxID_CLOSE, BorderEditorDialog::OnClose)
     EVT_BUTTON(wxID_FIND, BorderEditorDialog::OnBrowse)
     EVT_COMBOBOX(wxID_ANY, BorderEditorDialog::OnLoadBorder)
-    EVT_NOTEBOOK_PAGE_CHANGED(wxID_ANY, BorderEditorDialog::OnPageChanged)
+    EVT_NOTEBOOK_PAGE_CHANGED(ID_MAIN_NOTEBOOK, BorderEditorDialog::OnPageChanged)
     EVT_BUTTON(wxID_ADD + 100, BorderEditorDialog::OnAddGroundItem)
     EVT_BUTTON(wxID_REMOVE, BorderEditorDialog::OnRemoveGroundItem)
     EVT_BUTTON(wxID_FIND + 100, BorderEditorDialog::OnGroundBrowse)
@@ -1233,7 +1885,9 @@ BEGIN_EVENT_TABLE(BorderEditorDialog, wxDialog)
     EVT_BUTTON(ID_CREATE_TILESET, BorderEditorDialog::OnCreateTileset)
     EVT_BUTTON(ID_TEST_BRUSH, BorderEditorDialog::OnTestBrush)
     EVT_CHOICE(ID_ZORDER_CHOICE, BorderEditorDialog::OnZOrderChoice)
-    EVT_BUTTON(ID_BORDER_AUTOMATCH, BorderEditorDialog::OnAutoMatch)
+    EVT_BUTTON(ID_BORDER_AUTOMATCH_OPAQUE, BorderEditorDialog::OnAutoMatchOpaque)
+    EVT_BUTTON(ID_BORDER_AUTOMATCH_REVERSE, BorderEditorDialog::OnAutoMatchReverse)
+    EVT_NOTEBOOK_PAGE_CHANGED(ID_GRID_VIEW_NOTEBOOK, BorderEditorDialog::OnGridViewTabChanged)
 END_EVENT_TABLE()
 
 // Event table for BorderItemButton
@@ -1309,7 +1963,7 @@ void BorderEditorDialog::CreateGUIControls() {
     topSizer->Add(commonPropertiesSizer, 0, wxEXPAND | wxALL, 5);
     
     // Create notebook with Border and Ground tabs
-    m_notebook = new wxNotebook(this, wxID_ANY);
+    m_notebook = new wxNotebook(this, ID_MAIN_NOTEBOOK);
     
     // ========== BORDER TAB ==========
     m_borderPanel = new wxPanel(m_notebook);
@@ -1362,15 +2016,29 @@ void BorderEditorDialog::CreateGUIControls() {
     // Border content area with grid and preview
     wxBoxSizer* borderContentSizer = new wxBoxSizer(wxHORIZONTAL);
     
-    // Left side - 9-tile edge grid editor
-    wxStaticBoxSizer* gridSizer = new wxStaticBoxSizer(wxVERTICAL, m_borderPanel, "Border Grid (9-Tile Edges)");
+    // Left side - border grid editor (classic 9-tile or loop + corners)
+    wxStaticBoxSizer* gridSizer = new wxStaticBoxSizer(wxVERTICAL, m_borderPanel, "Border Grid");
 
-    m_gridPanel = new BorderGridPanel(m_borderPanel);
-    m_gridPanel->SetMinSize(wxSize(320, 320));
-    gridSizer->Add(m_gridPanel, 1, wxEXPAND | wxALL, 5);
+    m_gridViewNotebook = new wxNotebook(m_borderPanel, ID_GRID_VIEW_NOTEBOOK);
+    wxPanel* edgesGridPage = new wxPanel(m_gridViewNotebook);
+    wxPanel* loopGridPage = new wxPanel(m_gridViewNotebook);
+
+    m_gridPanel = new BorderGridPanel(edgesGridPage);
+    m_gridPanel->SetMinSize(wxSize(480, 320));
+
+    wxBoxSizer* edgesGridSizer = new wxBoxSizer(wxVERTICAL);
+    edgesGridSizer->Add(m_gridPanel, 1, wxEXPAND);
+    edgesGridPage->SetSizer(edgesGridSizer);
+
+    wxBoxSizer* loopGridSizer = new wxBoxSizer(wxVERTICAL);
+    loopGridPage->SetSizer(loopGridSizer);
+
+    m_gridViewNotebook->AddPage(edgesGridPage, "9-Tile Edges");
+    m_gridViewNotebook->AddPage(loopGridPage, "Loop + Corners");
+    gridSizer->Add(m_gridViewNotebook, 1, wxEXPAND | wxALL, 5);
     
     wxStaticText* instructions = new wxStaticText(m_borderPanel, wxID_ANY, 
-        "Click a grid cell to assign the current brush/item, or use Auto Match to fill edges by sprite shape overlay.");
+        "Click a grid cell to assign the current brush/item. AutoMatch 1 = opaque (sparse). AutoMatch 2 = reverse (overfilled).");
     instructions->SetForegroundColour(*wxBLUE);
     gridSizer->Add(instructions, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 5);
     
@@ -1398,11 +2066,16 @@ void BorderEditorDialog::CreateGUIControls() {
     itemSizer->Add(new wxStaticText(m_borderPanel, wxID_ANY, "To ID:"), 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 4);
     m_automatchToSpin = new wxSpinCtrl(m_borderPanel, wxID_ANY, "445", wxDefaultPosition, wxSize(70, -1), wxSP_ARROW_KEYS, 0, 65535, 445);
     m_automatchToSpin->SetToolTip("Last item ID to scan (inclusive)");
-    itemSizer->Add(m_automatchToSpin, 0, wxRIGHT, 5);
+    itemSizer->Add(m_automatchToSpin, 0, wxRIGHT, 8);
 
-    wxButton* autoMatchButton = new wxButton(m_borderPanel, ID_BORDER_AUTOMATCH, "Auto Match", wxDefaultPosition, wxDefaultSize, wxBU_EXACTFIT);
-    autoMatchButton->SetToolTip("Scan the ID range: classify by 8x8 corners / 16px cardinals / 3-quarter L-shapes, then match within each group.");
-    itemSizer->Add(autoMatchButton, 0);
+    wxBoxSizer* autoMatchSizer = new wxBoxSizer(wxVERTICAL);
+    wxButton* autoMatch1Button = new wxButton(m_borderPanel, ID_BORDER_AUTOMATCH_OPAQUE, "AutoMatch 1", wxDefaultPosition, wxSize(100, -1));
+    autoMatch1Button->SetToolTip("Opaque region match — apply directly. Best for sparse borders (e.g. wood 434–445).");
+    wxButton* autoMatch2Button = new wxButton(m_borderPanel, ID_BORDER_AUTOMATCH_REVERSE, "AutoMatch 2", wxDefaultPosition, wxSize(100, -1));
+    autoMatch2Button->SetToolTip("Reverse banana/chip/side match — apply directly. Best for overfilled tiles.");
+    autoMatchSizer->Add(autoMatch1Button, 0, wxEXPAND | wxBOTTOM, 3);
+    autoMatchSizer->Add(autoMatch2Button, 0, wxEXPAND);
+    itemSizer->Add(autoMatchSizer, 0, wxALIGN_CENTER_VERTICAL);
     gridSizer->Add(itemSizer, 0, wxEXPAND | wxALL, 5);
     
     m_borderItemPicker->Connect(wxEVT_LEFT_DOWN, wxMouseEventHandler(BorderEditorDialog::OnBorderItemPickerClick), nullptr, this);
@@ -2251,8 +2924,10 @@ void BorderEditorDialog::UpdatePreview() {
         m_gridPanel->SetCenterGroundItemId(0);
     }
     m_previewPanel->SetBorderItems(m_borderItems);
-    m_previewPanel->Refresh();
-    m_gridPanel->Refresh();
+    m_previewPanel->Refresh(false);
+    m_previewPanel->Update();
+    m_gridPanel->Refresh(false);
+    m_gridPanel->Update();
 }
 
 void BorderEditorDialog::ApplyAutoMatchedBorders(const std::map<BorderEdgePosition, uint16_t>& matches) {
@@ -2267,7 +2942,40 @@ void BorderEditorDialog::ApplyAutoMatchedBorders(const std::map<BorderEdgePositi
     UpdatePreview();
 }
 
-void BorderEditorDialog::OnAutoMatch(wxCommandEvent& event) {
+void BorderEditorDialog::OnGridViewTabChanged(wxNotebookEvent& event) {
+    if (!m_gridPanel || !m_gridViewNotebook) {
+        event.Skip();
+        return;
+    }
+
+    const int selection = event.GetSelection();
+    wxPanel* targetPage = dynamic_cast<wxPanel*>(m_gridViewNotebook->GetPage(selection));
+    if (!targetPage) {
+        event.Skip();
+        return;
+    }
+
+    if (m_gridPanel->GetParent() != targetPage) {
+        m_gridPanel->Reparent(targetPage);
+        wxSizer* pageSizer = targetPage->GetSizer();
+        if (pageSizer) {
+            pageSizer->Clear(false);
+            pageSizer->Add(m_gridPanel, 1, wxEXPAND);
+        }
+    }
+
+    m_gridPanel->SetViewMode(selection == 1 ? GRID_VIEW_LOOP : GRID_VIEW_EDGES);
+    targetPage->Layout();
+    m_gridViewNotebook->Layout();
+    if (wxWindow* parent = m_gridViewNotebook->GetParent()) {
+        parent->Layout();
+    }
+    m_gridPanel->Refresh(false);
+    m_gridPanel->Update();
+    event.Skip();
+}
+
+void BorderEditorDialog::RunAutoMatchDirect(BorderAutoMatchForceMode mode, const wxString& title) {
     const uint16_t seedItemId = static_cast<uint16_t>(m_itemIdCtrl->GetValue());
     const int fromId = m_automatchFromSpin->GetValue();
     const int toId = m_automatchToSpin->GetValue();
@@ -2287,19 +2995,27 @@ void BorderEditorDialog::OnAutoMatch(wxCommandEvent& event) {
 
     std::map<BorderEdgePosition, uint16_t> matches;
     wxString summary;
-    if (!autoMatchBorderSprites(seedItemId, fromId, toId, groundItemId, matches, summary)) {
-        wxMessageBox(summary, "Auto Match", wxICON_INFORMATION);
+    if (!AutoMatchBorderSprites(seedItemId, fromId, toId, groundItemId, mode, matches, summary)) {
+        wxMessageBox(summary, title, wxICON_INFORMATION);
         return;
     }
 
     ApplyAutoMatchedBorders(matches);
 
-    wxString details = summary + "\n\n";
-    for (const auto& match : matches) {
-        details += wxString::Format("%s -> %u\n", wxstr(edgePositionToString(match.first)), match.second);
+    const int expectedEdges = EDGE_COUNT - EDGE_N;
+    if (matches.size() < static_cast<size_t>(expectedEdges)) {
+        wxMessageBox(summary, title, wxICON_INFORMATION);
     }
+}
 
-    wxMessageBox(details, "Auto Match", wxICON_INFORMATION);
+void BorderEditorDialog::OnAutoMatchOpaque(wxCommandEvent& event) {
+    (void)event;
+    RunAutoMatchDirect(BorderAutoMatchForceMode::OpaqueOnly, "AutoMatch 1 (Opaque)");
+}
+
+void BorderEditorDialog::OnAutoMatchReverse(wxCommandEvent& event) {
+    (void)event;
+    RunAutoMatchDirect(BorderAutoMatchForceMode::TransparentOnly, "AutoMatch 2 (Reverse)");
 }
 
 bool BorderEditorDialog::ValidateBorder() {
@@ -2542,6 +3258,7 @@ void BorderItemPicker::SetItemId(uint16_t id) {
 BorderGridPanel::BorderGridPanel(wxWindow* parent, wxWindowID id) :
     wxPanel(parent, id, wxDefaultPosition, wxDefaultSize, wxBORDER_SUNKEN),
     m_selectedPosition(EDGE_NONE),
+    m_dragStartPosition(EDGE_NONE),
     m_viewMode(GRID_VIEW_EDGES),
     m_centerGroundItemId(0) {
     SetBackgroundStyle(wxBG_STYLE_PAINT);
@@ -2551,8 +3268,16 @@ BorderGridPanel::~BorderGridPanel() {
 }
 
 void BorderGridPanel::SetViewMode(BorderGridViewMode mode) {
+    if (m_viewMode == mode) {
+        Refresh(false);
+        Update();
+        return;
+    }
     m_viewMode = mode;
-    Refresh();
+    m_selectedPosition = EDGE_NONE;
+    m_dragStartPosition = EDGE_NONE;
+    Refresh(false);
+    Update();
 }
 
 void BorderGridPanel::SetCenterGroundItemId(uint16_t itemId) {
@@ -2646,6 +3371,171 @@ void BorderGridPanel::DrawEdgeZone(wxDC& dc, BorderEdgePosition pos, const wxRec
     if (spriteH > 0) {
         DrawSpriteForItem(dc, GetItemId(pos), zone.x + padding, spriteY, zone.width - padding * 2, spriteH);
     }
+}
+
+void BorderGridPanel::GetLoopLayoutAreas(const wxRect& panelRect, wxRect& loopArea, wxRect& cornerArea) const {
+    const int gap = 6;
+    const int cornerPanelWidth = std::max(200, panelRect.width * 46 / 100);
+    loopArea = wxRect(panelRect.x, panelRect.y, panelRect.width - cornerPanelWidth - gap, panelRect.height);
+    cornerArea = wxRect(loopArea.x + loopArea.width + gap, panelRect.y, cornerPanelWidth, panelRect.height);
+}
+
+BorderEdgePosition BorderGridPanel::LoopCellPosition(int col, int row) const {
+    static const BorderEdgePosition kLoopCells[3][3] = {
+        { EDGE_NONE, EDGE_N, EDGE_NONE },
+        { EDGE_W, EDGE_NONE, EDGE_E },
+        { EDGE_NONE, EDGE_S, EDGE_NONE },
+    };
+    return kLoopCells[row][col];
+}
+
+BorderEdgePosition BorderGridPanel::CornerGridPosition(int col, int row) const {
+    static const BorderEdgePosition kCornerGrid[4][4] = {
+        { EDGE_NONE, EDGE_NONE, EDGE_NONE, EDGE_NONE },
+        { EDGE_NONE, EDGE_NONE, EDGE_NONE, EDGE_NONE },
+        { EDGE_DSE, EDGE_DSW, EDGE_CSE, EDGE_CSW },
+        { EDGE_DNE, EDGE_DNW, EDGE_CNE, EDGE_CNW },
+    };
+    return kCornerGrid[row][col];
+}
+
+void BorderGridPanel::GetCornerGridCellRect(int col, int row, const wxRect& cornerArea, wxRect& out) const {
+    const int cellW = cornerArea.width / 4;
+    const int cellH = cornerArea.height / 4;
+    out = wxRect(cornerArea.x + col * cellW, cornerArea.y + row * cellH, cellW, cellH);
+}
+
+void BorderGridPanel::GetLoopCellRect(int col, int row, const wxRect& loopArea, wxRect& out) const {
+    const int cell = std::min(loopArea.width, loopArea.height) / 3;
+    const int offsetX = loopArea.x + (loopArea.width - cell * 3) / 2;
+    const int offsetY = loopArea.y + (loopArea.height - cell * 3) / 2;
+    out = wxRect(offsetX + col * cell, offsetY + row * cell, cell, cell);
+}
+
+void BorderGridPanel::DrawLoopLayout(wxDC& dc, const wxRect& rect) {
+    wxRect loopArea;
+    wxRect cornerArea;
+    GetLoopLayoutAreas(rect, loopArea, cornerArea);
+
+    dc.SetPen(wxPen(wxColour(90, 90, 90)));
+    dc.SetBrush(*wxTRANSPARENT_BRUSH);
+
+    // Side loop guide: w -> n -> e -> s.
+    wxPoint loopCenters[4];
+    const int loopCols[4] = { 0, 1, 2, 1 };
+    const int loopRows[4] = { 1, 0, 1, 2 };
+    for (int index = 0; index < 4; ++index) {
+        wxRect cellRect;
+        GetLoopCellRect(loopCols[index], loopRows[index], loopArea, cellRect);
+        loopCenters[index] = wxPoint(
+            cellRect.x + cellRect.width / 2,
+            cellRect.y + cellRect.height / 2);
+    }
+    dc.SetPen(wxPen(wxColour(170, 190, 220), 2));
+    for (int index = 0; index < 4; ++index) {
+        dc.DrawLine(loopCenters[index], loopCenters[(index + 1) % 4]);
+    }
+
+    // Loop ring: sides + ground (chips/bananas live in the corner grid).
+    for (int row = 0; row < 3; ++row) {
+        for (int col = 0; col < 3; ++col) {
+            wxRect cellRect;
+            GetLoopCellRect(col, row, loopArea, cellRect);
+
+            const BorderEdgePosition pos = LoopCellPosition(col, row);
+            if (pos == EDGE_NONE && !(col == 1 && row == 1)) {
+                continue;
+            }
+
+            dc.DrawRectangle(cellRect);
+
+            if (pos == EDGE_NONE) {
+                dc.SetBrush(wxBrush(wxColour(150, 200, 130)));
+                dc.SetPen(*wxTRANSPARENT_PEN);
+                dc.DrawRectangle(cellRect.Deflate(4));
+                dc.SetPen(wxPen(wxColour(90, 90, 90)));
+                dc.SetBrush(*wxTRANSPARENT_BRUSH);
+                DrawSpriteForItem(dc, m_centerGroundItemId, cellRect.x + 8, cellRect.y + 8, cellRect.width - 16, cellRect.height - 16);
+                dc.DrawText("ground", cellRect.x + 6, cellRect.y + 4);
+                continue;
+            }
+
+            const wxRect spriteZone = GetSingleCellSpriteZone(cellRect);
+            if (pos == m_selectedPosition) {
+                dc.SetPen(*wxRED_PEN);
+                dc.SetBrush(wxBrush(wxColour(255, 220, 220)));
+                dc.DrawRectangle(spriteZone);
+                dc.SetPen(wxPen(wxColour(90, 90, 90)));
+                dc.SetBrush(*wxTRANSPARENT_BRUSH);
+            }
+            dc.DrawText(wxstr(edgePositionToString(pos)), cellRect.x + 4, cellRect.y + 2);
+            DrawSpriteForItem(dc, GetItemId(pos), spriteZone.x, spriteZone.y, spriteZone.width, spriteZone.height);
+        }
+    }
+
+    // Corner grid (4x4): two spacer rows, then south row, then north row.
+    dc.SetPen(wxPen(wxColour(90, 90, 90)));
+    dc.DrawRectangle(cornerArea);
+    dc.DrawText("Corners", cornerArea.x + 6, cornerArea.y + 4);
+
+    for (int row = 0; row < 4; ++row) {
+        for (int col = 0; col < 4; ++col) {
+            const BorderEdgePosition pos = CornerGridPosition(col, row);
+            if (pos == EDGE_NONE) {
+                continue;
+            }
+
+            wxRect cellRect;
+            GetCornerGridCellRect(col, row, cornerArea, cellRect);
+            dc.DrawRectangle(cellRect);
+
+            const wxRect spriteZone = GetSingleCellSpriteZone(cellRect);
+            if (pos == m_selectedPosition) {
+                dc.SetPen(*wxRED_PEN);
+                dc.SetBrush(wxBrush(wxColour(255, 220, 220)));
+                dc.DrawRectangle(spriteZone);
+                dc.SetPen(wxPen(wxColour(90, 90, 90)));
+                dc.SetBrush(*wxTRANSPARENT_BRUSH);
+            }
+            dc.DrawText(wxstr(edgePositionToString(pos)), cellRect.x + 4, cellRect.y + 2);
+            DrawSpriteForItem(dc, GetItemId(pos), spriteZone.x, spriteZone.y, spriteZone.width, spriteZone.height);
+        }
+    }
+}
+
+BorderEdgePosition BorderGridPanel::HitTestLoopLayout(int x, int y, const wxRect& rect) const {
+    wxRect loopArea;
+    wxRect cornerArea;
+    GetLoopLayoutAreas(rect, loopArea, cornerArea);
+
+    for (int row = 0; row < 3; ++row) {
+        for (int col = 0; col < 3; ++col) {
+            wxRect cellRect;
+            GetLoopCellRect(col, row, loopArea, cellRect);
+            if (!cellRect.Contains(x, y)) {
+                continue;
+            }
+            return LoopCellPosition(col, row);
+        }
+    }
+
+    if (cornerArea.Contains(x, y)) {
+        for (int row = 0; row < 4; ++row) {
+            for (int col = 0; col < 4; ++col) {
+                const BorderEdgePosition pos = CornerGridPosition(col, row);
+                if (pos == EDGE_NONE) {
+                    continue;
+                }
+                wxRect cellRect;
+                GetCornerGridCellRect(col, row, cornerArea, cellRect);
+                if (cellRect.Contains(x, y)) {
+                    return pos;
+                }
+            }
+        }
+    }
+
+    return EDGE_NONE;
 }
 
 void BorderGridPanel::DrawEdgeLayout(wxDC& dc, const wxRect& rect) {
@@ -2792,6 +3682,9 @@ void BorderGridPanel::OnPaint(wxPaintEvent& event) {
         case GRID_VIEW_INNER:
             DrawMapPreview(dc, rect, true);
             break;
+        case GRID_VIEW_LOOP:
+            DrawLoopLayout(dc, rect);
+            break;
         case GRID_VIEW_EDGES:
         default:
             DrawEdgeLayout(dc, rect);
@@ -2830,6 +3723,9 @@ BorderEdgePosition BorderGridPanel::HitTestEdgeCell(int x, int y, const wxRect& 
 }
 
 BorderEdgePosition BorderGridPanel::GetPositionFromCoordinates(int x, int y) const {
+    if (m_viewMode == GRID_VIEW_LOOP) {
+        return HitTestLoopLayout(x, y, GetClientRect());
+    }
     if (m_viewMode != GRID_VIEW_EDGES) {
         return EDGE_NONE;
     }
@@ -2842,41 +3738,44 @@ void BorderGridPanel::OnMouseClick(wxMouseEvent& event) {
     
     BorderEdgePosition pos = GetPositionFromCoordinates(x, y);
     if (pos != EDGE_NONE) {
-        // Set the position as selected in the grid
+        wxWindow* parent = GetParent();
+        while (parent && !dynamic_cast<BorderEditorDialog*>(parent) && !dynamic_cast<BorderAutoMatchPreviewDialog*>(parent)) {
+            parent = parent->GetParent();
+        }
+
+        BorderAutoMatchPreviewDialog* previewDialog = dynamic_cast<BorderAutoMatchPreviewDialog*>(parent);
+        if (previewDialog && m_dragStartPosition != EDGE_NONE && m_dragStartPosition != pos) {
+            const uint16_t dragItemId = GetItemId(m_dragStartPosition);
+            const uint16_t targetItemId = GetItemId(pos);
+            if (dragItemId != 0 || targetItemId != 0) {
+                SetItemId(m_dragStartPosition, targetItemId);
+                SetItemId(pos, dragItemId);
+                SetSelectedPosition(pos);
+                Refresh();
+                m_dragStartPosition = EDGE_NONE;
+                return;
+            }
+        }
+
         SetSelectedPosition(pos);
         
-        // Notify the parent dialog that a position was selected
         wxCommandEvent selEvent(wxEVT_COMMAND_BUTTON_CLICKED, ID_BORDER_GRID_SELECT);
         selEvent.SetInt(static_cast<int>(pos));
         
-        // Find the parent BorderEditorDialog
-        wxWindow* parent = GetParent();
-        while (parent && !dynamic_cast<BorderEditorDialog*>(parent)) {
-            parent = parent->GetParent();
-        }
-        
-        // Send the event to the parent dialog
         BorderEditorDialog* dialog = dynamic_cast<BorderEditorDialog*>(parent);
         if (dialog) {
-            // Call the event handler directly
-            OutputDebugStringA(wxString::Format("BorderGridPanel::OnMouseClick: Calling OnPositionSelected directly for position %s\n", 
-                            wxstr(edgePositionToString(pos)).c_str()).mb_str());
             dialog->OnPositionSelected(selEvent);
+        } else if (previewDialog) {
+            previewDialog->OnMatchGridCellClicked(pos);
         } else {
-            // If we couldn't find the parent dialog, post the event to the parent
-            OutputDebugStringA("BorderGridPanel::OnMouseClick: Could not find BorderEditorDialog parent, posting event\n");
             wxPostEvent(GetParent(), selEvent);
         }
     }
 }
 
 void BorderGridPanel::OnMouseDown(wxMouseEvent& event) {
-    // Get the position from the coordinates
-    BorderEdgePosition pos = GetPositionFromCoordinates(event.GetX(), event.GetY());
-    
-    // Set the selected position
-    SetSelectedPosition(pos);
-    
+    m_dragStartPosition = GetPositionFromCoordinates(event.GetX(), event.GetY());
+    SetSelectedPosition(m_dragStartPosition);
     event.Skip();
 }
 
@@ -2980,6 +3879,264 @@ void BorderPreviewPanel::OnPaint(wxPaintEvent& event) {
             }
         }
     }
+}
+
+namespace {
+
+void SetPreviewPanelMatches(BorderPreviewPanel* panel, const std::map<BorderEdgePosition, uint16_t>& matches) {
+    std::vector<BorderItem> items;
+    items.reserve(matches.size());
+    for (const auto& match : matches) {
+        items.push_back(BorderItem(match.first, match.second));
+    }
+    panel->SetBorderItems(items);
+}
+
+} // namespace
+
+BEGIN_EVENT_TABLE(BorderAutoMatchPreviewDialog, wxDialog)
+    EVT_BUTTON(ID_BORDER_MATCH_PICK_OPAQUE, BorderAutoMatchPreviewDialog::OnPickOpaque)
+    EVT_BUTTON(ID_BORDER_MATCH_PICK_TRANSPARENT, BorderAutoMatchPreviewDialog::OnPickTransparent)
+    EVT_BUTTON(ID_BORDER_MATCH_REROLL, BorderAutoMatchPreviewDialog::OnReroll)
+    EVT_BUTTON(wxID_OK, BorderAutoMatchPreviewDialog::OnApply)
+END_EVENT_TABLE()
+
+BorderAutoMatchPreviewDialog::BorderAutoMatchPreviewDialog(
+    wxWindow* parent,
+    uint16_t seedItemId,
+    int fromId,
+    int toId,
+    uint16_t groundItemId,
+    const std::map<BorderEdgePosition, uint16_t>& opaqueMatches,
+    const std::map<BorderEdgePosition, uint16_t>& transparentMatches,
+    const wxString& opaqueSummary,
+    const wxString& transparentSummary) :
+    wxDialog(parent, wxID_ANY, "Auto Match Preview", wxDefaultPosition, wxSize(920, 720),
+        wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER),
+    m_seedItemId(seedItemId),
+    m_fromId(fromId),
+    m_toId(toId),
+    m_groundItemId(groundItemId),
+    m_opaqueMatches(opaqueMatches),
+    m_transparentMatches(transparentMatches),
+    m_opaqueSummary(opaqueSummary),
+    m_transparentSummary(transparentSummary),
+    m_selectedAlgorithm(BORDER_MATCH_ALGO_OPAQUE),
+    m_opaquePreview(nullptr),
+    m_transparentPreview(nullptr),
+    m_opaqueSummaryLabel(nullptr),
+    m_transparentSummaryLabel(nullptr),
+    m_pickOpaqueBtn(nullptr),
+    m_pickTransparentBtn(nullptr),
+    m_editGrid(nullptr) {
+    if (m_opaqueMatches.empty() && !m_transparentMatches.empty()) {
+        m_selectedAlgorithm = BORDER_MATCH_ALGO_TRANSPARENT;
+    } else if (!m_opaqueMatches.empty() && m_transparentMatches.empty()) {
+        m_selectedAlgorithm = BORDER_MATCH_ALGO_OPAQUE;
+    } else if (m_opaqueMatches.size() < m_transparentMatches.size()) {
+        m_selectedAlgorithm = BORDER_MATCH_ALGO_TRANSPARENT;
+    } else {
+        m_selectedAlgorithm = BORDER_MATCH_ALGO_OPAQUE;
+    }
+
+    wxBoxSizer* rootSizer = new wxBoxSizer(wxVERTICAL);
+
+    rootSizer->Add(new wxStaticText(this, wxID_ANY,
+        "Compare both matching strategies side by side. Pick one, tweak slots below, then Apply."),
+        0, wxALL | wxEXPAND, 8);
+
+    wxBoxSizer* previewRow = new wxBoxSizer(wxHORIZONTAL);
+
+    wxStaticBoxSizer* opaqueBox = new wxStaticBoxSizer(wxVERTICAL, this, "Opaque region match");
+    m_opaquePreview = new BorderPreviewPanel(this, wxID_ANY);
+    m_opaqueSummaryLabel = new wxStaticText(this, wxID_ANY, m_opaqueSummary);
+    m_opaqueSummaryLabel->Wrap(380);
+    m_pickOpaqueBtn = new wxButton(this, ID_BORDER_MATCH_PICK_OPAQUE, "Use opaque result");
+    opaqueBox->Add(m_opaquePreview, 0, wxALL | wxALIGN_CENTER_HORIZONTAL, 4);
+    opaqueBox->Add(m_opaqueSummaryLabel, 0, wxALL | wxEXPAND, 4);
+    opaqueBox->Add(m_pickOpaqueBtn, 0, wxALL | wxEXPAND, 4);
+
+    wxStaticBoxSizer* transparentBox = new wxStaticBoxSizer(wxVERTICAL, this, "Reverse match (banana / chip / side)");
+    m_transparentPreview = new BorderPreviewPanel(this, wxID_ANY);
+    m_transparentSummaryLabel = new wxStaticText(this, wxID_ANY, m_transparentSummary);
+    m_transparentSummaryLabel->Wrap(380);
+    m_pickTransparentBtn = new wxButton(this, ID_BORDER_MATCH_PICK_TRANSPARENT, "Use reverse result");
+    transparentBox->Add(m_transparentPreview, 0, wxALL | wxALIGN_CENTER_HORIZONTAL, 4);
+    transparentBox->Add(m_transparentSummaryLabel, 0, wxALL | wxEXPAND, 4);
+    transparentBox->Add(m_pickTransparentBtn, 0, wxALL | wxEXPAND, 4);
+
+    previewRow->Add(opaqueBox, 1, wxEXPAND | wxALL, 4);
+    previewRow->Add(transparentBox, 1, wxEXPAND | wxALL, 4);
+    rootSizer->Add(previewRow, 0, wxEXPAND);
+
+    rootSizer->Add(new wxStaticLine(this), 0, wxEXPAND | wxLEFT | wxRIGHT, 8);
+    rootSizer->Add(new wxStaticText(this, wxID_ANY,
+        "Edit before apply: click a slot to set item ID, or drag from one slot to another to swap."),
+        0, wxALL | wxEXPAND, 8);
+
+    m_editGrid = new BorderGridPanel(this, wxID_ANY);
+    m_editGrid->SetMinSize(wxSize(BORDER_GRID_CELL_SIZE * 3, BORDER_GRID_CELL_SIZE * 3));
+    rootSizer->Add(m_editGrid, 0, wxALL | wxALIGN_CENTER_HORIZONTAL, 8);
+
+    wxBoxSizer* buttonRow = new wxBoxSizer(wxHORIZONTAL);
+    buttonRow->Add(new wxButton(this, ID_BORDER_MATCH_REROLL, "Re-roll"), 0, wxALL, 4);
+    buttonRow->AddStretchSpacer();
+    buttonRow->Add(new wxButton(this, wxID_CANCEL), 0, wxALL, 4);
+    buttonRow->Add(new wxButton(this, wxID_OK, "Apply"), 0, wxALL, 4);
+    rootSizer->Add(buttonRow, 0, wxEXPAND | wxALL, 4);
+
+    SetSizer(rootSizer);
+    Layout();
+    CentreOnParent();
+
+    RefreshAlgorithmViews();
+    ApplyMatchesToEditGrid(m_selectedAlgorithm == BORDER_MATCH_ALGO_OPAQUE ? m_opaqueMatches : m_transparentMatches);
+    UpdateAlgorithmChoiceButtons();
+}
+
+BorderAutoMatchPreviewDialog::~BorderAutoMatchPreviewDialog() {
+}
+
+std::map<BorderEdgePosition, uint16_t> BorderAutoMatchPreviewDialog::GetResultMatches() const {
+    return CollectEditGridMatches();
+}
+
+void BorderAutoMatchPreviewDialog::OnMatchGridCellClicked(BorderEdgePosition pos) {
+    const uint16_t currentItemId = m_editGrid->GetItemId(pos);
+    long defaultValue = currentItemId != 0 ? currentItemId : m_fromId;
+    const long newId = wxGetNumberFromUser(
+        wxString::Format("Item ID for position %s (range %d-%d):",
+            wxstr(edgePositionToString(pos)), m_fromId, m_toId),
+        "Item ID:",
+        "Edit Border Slot",
+        defaultValue,
+        m_fromId,
+        m_toId);
+
+    if (newId == -1) {
+        return;
+    }
+
+    m_editGrid->SetItemId(pos, static_cast<uint16_t>(newId));
+    m_editGrid->Refresh();
+}
+
+void BorderAutoMatchPreviewDialog::RefreshAlgorithmViews() {
+    SetPreviewPanelMatches(m_opaquePreview, m_opaqueMatches);
+    SetPreviewPanelMatches(m_transparentPreview, m_transparentMatches);
+    m_opaqueSummaryLabel->SetLabel(m_opaqueSummary);
+    m_transparentSummaryLabel->SetLabel(m_transparentSummary);
+    Layout();
+}
+
+void BorderAutoMatchPreviewDialog::ApplyMatchesToEditGrid(const std::map<BorderEdgePosition, uint16_t>& matches) {
+    m_editGrid->Clear();
+    m_editGrid->SetCenterGroundItemId(m_groundItemId);
+    for (const auto& match : matches) {
+        m_editGrid->SetItemId(match.first, match.second);
+    }
+    m_editGrid->Refresh();
+}
+
+std::map<BorderEdgePosition, uint16_t> BorderAutoMatchPreviewDialog::CollectEditGridMatches() const {
+    std::map<BorderEdgePosition, uint16_t> matches = m_editGrid->GetAllItems();
+    matches.erase(EDGE_NONE);
+    return matches;
+}
+
+void BorderAutoMatchPreviewDialog::RerunBothAlgorithms() {
+    wxString opaqueSummary;
+    wxString transparentSummary;
+    std::map<BorderEdgePosition, uint16_t> opaqueMatches;
+    std::map<BorderEdgePosition, uint16_t> transparentMatches;
+
+    const bool opaqueOk = AutoMatchBorderSprites(
+        m_seedItemId, m_fromId, m_toId, m_groundItemId,
+        BorderAutoMatchForceMode::OpaqueOnly, opaqueMatches, opaqueSummary);
+    const bool transparentOk = AutoMatchBorderSprites(
+        m_seedItemId, m_fromId, m_toId, m_groundItemId,
+        BorderAutoMatchForceMode::TransparentOnly, transparentMatches, transparentSummary);
+
+    if (opaqueOk) {
+        m_opaqueMatches = opaqueMatches;
+        m_opaqueSummary = opaqueSummary;
+    } else {
+        m_opaqueMatches.clear();
+        m_opaqueSummary = opaqueSummary.IsEmpty()
+            ? wxString("Opaque matching found no usable sprites.")
+            : opaqueSummary;
+    }
+
+    if (transparentOk) {
+        m_transparentMatches = transparentMatches;
+        m_transparentSummary = transparentSummary;
+    } else {
+        m_transparentMatches.clear();
+        m_transparentSummary = transparentSummary.IsEmpty()
+            ? wxString("Reverse matching found no usable sprites.")
+            : transparentSummary;
+    }
+
+    RefreshAlgorithmViews();
+    ApplyMatchesToEditGrid(m_selectedAlgorithm == BORDER_MATCH_ALGO_OPAQUE ? m_opaqueMatches : m_transparentMatches);
+    UpdateAlgorithmChoiceButtons();
+}
+
+void BorderAutoMatchPreviewDialog::UpdateAlgorithmChoiceButtons() {
+    const bool opaqueAvailable = !m_opaqueMatches.empty();
+    const bool transparentAvailable = !m_transparentMatches.empty();
+    const bool opaqueSelected = m_selectedAlgorithm == BORDER_MATCH_ALGO_OPAQUE;
+
+    m_pickOpaqueBtn->Enable(opaqueAvailable);
+    m_pickTransparentBtn->Enable(transparentAvailable);
+
+    if (opaqueSelected && opaqueAvailable) {
+        m_pickOpaqueBtn->SetLabel("Selected (opaque)");
+        m_pickTransparentBtn->SetLabel("Use reverse result");
+    } else if (!opaqueSelected && transparentAvailable) {
+        m_pickOpaqueBtn->SetLabel("Use opaque result");
+        m_pickTransparentBtn->SetLabel("Selected (reverse)");
+    } else {
+        m_pickOpaqueBtn->SetLabel("Use opaque result");
+        m_pickTransparentBtn->SetLabel("Use reverse result");
+    }
+
+    m_pickOpaqueBtn->Refresh();
+    m_pickTransparentBtn->Refresh();
+}
+
+void BorderAutoMatchPreviewDialog::OnPickOpaque(wxCommandEvent& event) {
+    (void)event;
+    if (m_opaqueMatches.empty()) {
+        return;
+    }
+    m_selectedAlgorithm = BORDER_MATCH_ALGO_OPAQUE;
+    ApplyMatchesToEditGrid(m_opaqueMatches);
+    UpdateAlgorithmChoiceButtons();
+}
+
+void BorderAutoMatchPreviewDialog::OnPickTransparent(wxCommandEvent& event) {
+    (void)event;
+    if (m_transparentMatches.empty()) {
+        return;
+    }
+    m_selectedAlgorithm = BORDER_MATCH_ALGO_TRANSPARENT;
+    ApplyMatchesToEditGrid(m_transparentMatches);
+    UpdateAlgorithmChoiceButtons();
+}
+
+void BorderAutoMatchPreviewDialog::OnReroll(wxCommandEvent& event) {
+    (void)event;
+    RerunBothAlgorithms();
+}
+
+void BorderAutoMatchPreviewDialog::OnApply(wxCommandEvent& event) {
+    (void)event;
+    if (CollectEditGridMatches().empty()) {
+        wxMessageBox("No border slots are filled. Pick a result or edit the grid before applying.", "Auto Match Preview", wxICON_WARNING);
+        return;
+    }
+    EndModal(wxID_OK);
 }
 
 void BorderEditorDialog::LoadExistingGroundBrushes() {
@@ -3093,6 +4250,11 @@ void BorderEditorDialog::UpdateGroundItemsList() {
 }
 
 void BorderEditorDialog::OnPageChanged(wxBookCtrlEvent& event) {
+    if (event.GetEventObject() != m_notebook) {
+        event.Skip();
+        return;
+    }
+
     m_activeTab = event.GetSelection();
     
     // When switching to the ground tab, use the same border items for the ground brush

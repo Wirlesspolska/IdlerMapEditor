@@ -113,7 +113,7 @@ public:
 class Floor {
 public:
 	Floor(int x, int y, int z);
-	TileLocation locs[MAP_LAYERS];
+	TileLocation locs[MAP_FLOOR_SIZE];
 };
 
 // This is not a QuadTree, but a HexTree (16 child nodes to every node), so the name is abit misleading
@@ -137,10 +137,13 @@ public:
 	Floor* createFloor(int x, int y, int z);
 	Floor* getFloor(uint32_t z) {
 		ASSERT(isLeaf);
-		return array[z];
+		ASSERT(z < MAP_LAYERS);
+		ASSERT(floors);
+		return floors[z];
 	}
 	Floor** getFloors() {
-		return array;
+		ASSERT(isLeaf);
+		return floors;
 	}
 
 	void setVisible(bool overground, bool underground);
@@ -153,19 +156,16 @@ public:
 	bool isRequested(bool underground);
 
 protected:
+	void becomeLeaf();
+
 	BaseMap& map;
 	uint32_t visible;
 
 	bool isLeaf;
-	union {
-		QTreeNode* child[MAP_LAYERS];
-		Floor* array[MAP_LAYERS];
-		/*
-		#if 16 != MAP_LAYERS
-		#    error "You need to rewrite the QuadTree in order to handle more or less than 16 floors"
-		#endif
-		*/
-	};
+	// Spatial hex-tree children (non-leaf) — always MAP_TREE_CHILDREN
+	QTreeNode* child[MAP_TREE_CHILDREN];
+	// Per-Z floors (leaf only) — lazily allocated, length MAP_LAYERS
+	Floor** floors;
 
 	friend class BaseMap;
 	friend class MapIterator;

@@ -20,9 +20,19 @@
 #include "gui.h" // loadbar
 
 #include "map.h"
+#include "town.h"
+#include "tile.h"
 
 #include <sstream>
 #include "string_utils.h"
+
+namespace {
+constexpr uint32_t kDefaultTownId = 0;
+constexpr const char* kDefaultTownName = "City";
+constexpr int kDefaultTownTempleX = 1000;
+constexpr int kDefaultTownTempleY = 1000;
+constexpr int kDefaultTownTempleZ = 7;
+} // namespace
 
 Map::Map() :
 	BaseMap(),
@@ -40,6 +50,31 @@ Map::Map() :
 
 Map::~Map() {
 	////
+}
+
+bool Map::ensureDefaultTown() {
+	if (towns.getTown(kDefaultTownId) != nullptr) {
+		return false;
+	}
+
+	Town* town = newd Town(kDefaultTownId);
+	town->setName(kDefaultTownName);
+
+	Position temple(
+		std::min(kDefaultTownTempleX, static_cast<int>(getWidth())),
+		std::min(kDefaultTownTempleY, static_cast<int>(getHeight())),
+		kDefaultTownTempleZ
+	);
+	town->setTemplePosition(temple);
+
+	if (!towns.addTown(town)) {
+		delete town;
+		return false;
+	}
+
+	getOrCreateTile(temple)->getLocation()->increaseTownCount();
+	doChange();
+	return true;
 }
 
 bool Map::open(const std::string file) {

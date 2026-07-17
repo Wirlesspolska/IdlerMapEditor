@@ -20,6 +20,8 @@
 
 #include "main.h"
 
+#include <wx/listctrl.h>
+
 #include "dcbutton.h"
 #include "positionctrl.h"
 
@@ -331,7 +333,7 @@ public:
 	EditTownsDialog(wxWindow* parent, Editor& editor);
 	virtual ~EditTownsDialog();
 
-	void OnListBoxChange(wxCommandEvent&);
+	void OnListBoxChange(wxListEvent&);
 	void OnClickSelectTemplePosition(wxCommandEvent&);
 	void OnClickAdd(wxCommandEvent&);
 	void OnClickRemove(wxCommandEvent&);
@@ -340,22 +342,36 @@ public:
 	void OnPasteTempleText(wxCommandEvent&);
 	void OnClickImport(wxCommandEvent&);
 	void OnClickExport(wxCommandEvent&);
+	void OnTownBeginDrag(wxListEvent&);
+	void OnTownMouseMove(wxMouseEvent&);
+	void OnTownMouseUp(wxMouseEvent&);
+	void OnTownIdKillFocus(wxFocusEvent&);
 
 protected:
 	void BuildListBox(bool doselect);
 	void UpdateSelection(int new_selection);
-	void SynchronizeWithMap();
 	void ExportTownsToXML(const wxString& path);
 	void ImportTownsFromXML(const wxString& path);
 	void ExportTownToXML(const wxString& path, Town* town);
 	void ImportTownFromXML(const wxString& path);
 
+	uint32_t GetNextTownId() const;
+	void SwapTowns(long from_index, long to_index);
+	bool ChangeTownId(Town* town, uint32_t new_id);
+	void UpdateHousesTownId(uint32_t old_id, uint32_t new_id);
+	void RefreshTownListItems();
+	wxString FormatTownLabel(Town* town) const;
+	void SaveCurrentTownFields();
+	void RestoreHouseTownIds();
+
 	Editor& editor;
 
 	std::vector<Town*> town_list;
+	std::map<uint32_t, uint32_t> house_townid_backup;
 	uint32_t max_town_id;
+	int selected_town_index;
 
-	wxListBox* town_listbox;
+	wxListCtrl* town_listctrl;
 	wxString town_name, town_id;
 
 	wxTextCtrl* name_field;
@@ -366,6 +382,9 @@ protected:
 	wxButton* select_position_button;
 
 	wxTextCtrl* paste_temple_field;
+
+	bool dragging_town;
+	long drag_source_index;
 
 	DECLARE_EVENT_TABLE();
 };

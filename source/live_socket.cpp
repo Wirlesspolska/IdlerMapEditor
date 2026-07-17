@@ -105,7 +105,8 @@ void LiveSocket::receiveNode(NetworkMessage& message, Editor& editor, Action* ac
 		return;
 	}
 
-	for (uint_fast8_t z = 0; z < MAP_LAYERS; ++z) {
+	// Live protocol encodes floors in a 16-bit mask (classic 0..15 only).
+	for (uint32_t z = 0; z < 16; ++z) {
 		if (testFlags(floorBits, static_cast<uint64_t>(1) << z)) {
 			receiveFloor(message, editor, action, ndx, ndy, z, node, node->getFloor(z));
 		}
@@ -144,10 +145,11 @@ void LiveSocket::sendNode(uint32_t clientId, QTreeNode* node, int32_t ndx, int32
 		bool hasFloors = false;
 
 		uint16_t sendMask = 0;
-		for (uint32_t z = 0; z < MAP_LAYERS; ++z) {
-			uint32_t bit = 1 << z;
+		// Live protocol floor mask is 16 bits — only classic floors sync over live.
+		for (uint32_t z = 0; z < 16; ++z) {
+			uint32_t bit = 1u << z;
 			if (floors[z] && testFlags(floorMask, bit)) {
-				sendMask |= bit;
+				sendMask |= static_cast<uint16_t>(bit);
 				hasFloors = true;
 			}
 		}
@@ -157,7 +159,7 @@ void LiveSocket::sendNode(uint32_t clientId, QTreeNode* node, int32_t ndx, int32
 
 		// If we have floors to send, add them to the message
 		if (hasFloors) {
-			for (uint32_t z = 0; z < MAP_LAYERS; ++z) {
+			for (uint32_t z = 0; z < 16; ++z) {
 				if (testFlags(sendMask, static_cast<uint64_t>(1) << z)) {
 					sendFloor(message, floors[z]);
 				}

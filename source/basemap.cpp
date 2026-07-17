@@ -167,15 +167,15 @@ MapIterator BaseMap::begin() {
 		// printf("Contemplating %p of %p (stack size %d)\n", node, this, it.nodestack.size());
 
 		bool unwind = false;
-		for (; index < MAP_LAYERS; ++index) {
+		for (; index < MAP_TREE_CHILDREN; ++index) {
 			// printf("\tChecking index %d of %p\n", index, node);
 			if (QTreeNode* child = node->child[index]) {
 				if (child->isLeaf) {
 					QTreeNode* leaf = child;
 					// printf("\t%p is leaf\n", child);
 					for (it.local_z = 0; it.local_z < MAP_LAYERS; ++it.local_z) {
-						if (Floor* floor = leaf->array[it.local_z]) {
-							for (it.local_i = 0; it.local_i < MAP_LAYERS; ++it.local_i) {
+						if (Floor* floor = leaf->floors[it.local_z]) {
+							for (it.local_i = 0; it.local_i < MAP_FLOOR_SIZE; ++it.local_i) {
 								// printf("\tit(%d;%d;%d)\n", it.local_x, it.local_y, it.local_z);
 								TileLocation& t = floor->locs[it.local_i];
 								if (t.get()) {
@@ -234,7 +234,7 @@ MapIterator& MapIterator::operator++() {
 		// printf("Contemplating %p (stack size %d)\n", node, nodestack.size());
 
 		bool unwind = false;
-		for (; index < MAP_LAYERS; ++index) {
+		for (; index < MAP_TREE_CHILDREN; ++index) {
 			// printf("\tChecking index %d of %p\n", index, node);
 			if (QTreeNode* child = node->child[index]) {
 				if (child->isLeaf) {
@@ -242,9 +242,9 @@ MapIterator& MapIterator::operator++() {
 					// printf("\t%p is leaf\n", child);
 					for (; local_z < MAP_LAYERS; ++local_z) {
 						// printf("\t\tIterating over Z:%d of %p", local_z, child);
-						if (Floor* floor = leaf->array[local_z]) {
+						if (Floor* floor = leaf->floors[local_z]) {
 							// printf("\n");
-							for (; local_i < MAP_LAYERS; ++local_i) {
+							for (; local_i < MAP_FLOOR_SIZE; ++local_i) {
 								// printf("\t\tIterating over Y:%d of %p\n", local_y, child);
 								TileLocation& t = floor->locs[local_i];
 								if (t.get()) {
@@ -261,7 +261,7 @@ MapIterator& MapIterator::operator++() {
 								}
 							}
 
-							if (local_i > MAP_MAX_LAYER) {
+							if (local_i >= MAP_FLOOR_SIZE) {
 								// printf("\t\tReset local_x\n");
 								local_i = 0;
 							}

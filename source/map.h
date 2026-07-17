@@ -172,6 +172,9 @@ public:
 	void setHouseFilename(const std::string& new_housefile);
 	void setSpawnFilename(const std::string& new_spawnfile);
 
+	// Ensures town ID 0 ("City" @ 1000,1000,7) exists. Returns true if it was created.
+	bool ensureDefaultTown();
+
 	void flagAsNamed() {
 		unnamed = false;
 	}

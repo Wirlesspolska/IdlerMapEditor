@@ -37,7 +37,7 @@ class Editor {
 public:
 	Editor(CopyBuffer& copybuffer, LiveClient* client);
 	Editor(CopyBuffer& copybuffer, const FileName& fn);
-	Editor(CopyBuffer& copybuffer);
+	Editor(CopyBuffer& copybuffer, ClientVersionID force_version = CLIENT_VERSION_NONE, const FileName& create_path = FileName());
 	~Editor();
 
 protected:

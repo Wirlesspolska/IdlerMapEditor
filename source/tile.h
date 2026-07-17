@@ -46,6 +46,8 @@ enum : uint8_t {
 	INVALID_MINIMAP_COLOR = 0xFF
 };
 
+static constexpr int MAP_STACK_PEEK_GROUND_ONLY = -1;
+
 class Tile {
 public: // Members
 	TileLocation* location;
@@ -139,6 +141,9 @@ public: // Functions
 
 	int getIndexOf(Item* item) const;
 	Item* getTopItem() const; // Returns the topmost item, or nullptr if the tile is empty
+	size_t getVisibleItemCount(int stack_peek_offset) const;
+	Item* getTopVisibleItem(int stack_peek_offset) const;
+	bool hasHiddenItems(int stack_peek_offset) const;
 	Item* getItemAt(int index) const;
 	void addItem(Item* item);
 

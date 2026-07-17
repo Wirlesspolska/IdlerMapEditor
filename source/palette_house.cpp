@@ -196,65 +196,66 @@ PaletteType HousePalettePanel::GetType() const {
 }
 
 void HousePalettePanel::SelectTown(size_t index) {
-	ASSERT(town_choice->GetCount() >= index);
-
-	if (map == nullptr || town_choice->GetCount() == 0) {
+	if (map == nullptr || town_choice->GetCount() == 0 || index >= town_choice->GetCount()) {
 		// No towns :(
 		add_house_button->Enable(false);
-	} else {
-		Town* what_town = reinterpret_cast<Town*>(town_choice->GetClientData(index));
+		return;
+	}
 
-		// Clear the old houselist
-		house_list->Clear();
+	Town* what_town = reinterpret_cast<Town*>(town_choice->GetClientData(index));
 
-		for (HouseMap::iterator house_iter = map->houses.begin(); house_iter != map->houses.end(); ++house_iter) {
-			if (what_town) {
-				if (house_iter->second->townid == what_town->getID()) {
-					house_list->Append(wxstr(house_iter->second->getDescription()), house_iter->second);
-				}
-			} else {
-				// "No Town" selected!
-				if (map->towns.getTown(house_iter->second->townid) == nullptr) {
-					// The town doesn't exist
-					house_list->Append(wxstr(house_iter->second->getDescription()), house_iter->second);
-				}
+	// Clear the old houselist
+	house_list->Clear();
+
+	for (HouseMap::iterator house_iter = map->houses.begin(); house_iter != map->houses.end(); ++house_iter) {
+		if (what_town) {
+			if (house_iter->second->townid == what_town->getID()) {
+				house_list->Append(wxstr(house_iter->second->getDescription()), house_iter->second);
+			}
+		} else {
+			// "No Town" selected!
+			if (map->towns.getTown(house_iter->second->townid) == nullptr) {
+				// The town doesn't exist
+				house_list->Append(wxstr(house_iter->second->getDescription()), house_iter->second);
 			}
 		}
-		house_list->Sort();
-
-		// Select first house
-		SelectHouse(0);
-		town_choice->SetSelection(index);
-		add_house_button->Enable(what_town != nullptr);
-		ASSERT(what_town == nullptr || add_house_button->IsEnabled() || !IsEnabled());
 	}
+	house_list->Sort();
+
+	// Select first house
+	SelectHouse(0);
+	town_choice->SetSelection(index);
+	add_house_button->Enable(what_town != nullptr);
+	ASSERT(what_town == nullptr || add_house_button->IsEnabled() || !IsEnabled());
 }
 
 void HousePalettePanel::SelectHouse(size_t index) {
-	ASSERT(house_list->GetCount() >= index);
-
-	if (house_list->GetCount() > 0) {
-		edit_house_button->Enable(true);
-		remove_house_button->Enable(true);
-		select_position_button->Enable(true);
-		house_brush_button->Enable(true);
-		
-		// Clear any existing selections first
-		for (unsigned int i = 0; i < house_list->GetCount(); ++i) {
-			house_list->Deselect(i);
-		}
-		
-		// Select the house
-		house_list->SetSelection(index);
-		SelectHouseBrush();
-	} else {
-		// No houses :(
+	if (house_list->GetCount() == 0) {
 		edit_house_button->Enable(false);
 		remove_house_button->Enable(false);
 		select_position_button->Enable(false);
 		house_brush_button->Enable(false);
+		SelectHouseBrush();
+		g_gui.RefreshView();
+		return;
 	}
 
+	if (index >= house_list->GetCount()) {
+		index = 0;
+	}
+
+	edit_house_button->Enable(true);
+	remove_house_button->Enable(true);
+	select_position_button->Enable(true);
+	house_brush_button->Enable(true);
+
+	// Clear any existing selections first
+	for (unsigned int i = 0; i < house_list->GetCount(); ++i) {
+		house_list->Deselect(i);
+	}
+
+	// Select the house
+	house_list->SetSelection(index);
 	SelectHouseBrush();
 	g_gui.RefreshView();
 }
@@ -295,6 +296,9 @@ void HousePalettePanel::OnUpdate() {
 		return;
 	}
 
+	// Repair maps missing the required default town (ID 0 / City)
+	map->ensureDefaultTown();
+
 	if (map->towns.count() != 0) {
 		// Create choice control
 		for (TownMap::iterator town_iter = map->towns.begin(); town_iter != map->towns.end(); ++town_iter) {
@@ -303,10 +307,10 @@ void HousePalettePanel::OnUpdate() {
 		town_choice->Append("No Town", (void*)(nullptr));
 		if (old_town_selection <= 0) {
 			SelectTown(0);
-		} else if ((size_t)old_town_selection <= town_choice->GetCount()) {
+		} else if ((size_t)old_town_selection < town_choice->GetCount()) {
 			SelectTown(old_town_selection);
 		} else {
-			SelectTown(old_town_selection - 1);
+			SelectTown(town_choice->GetCount() - 1);
 		}
 
 		house_list->Enable(true);

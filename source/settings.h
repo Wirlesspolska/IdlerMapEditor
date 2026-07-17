@@ -248,6 +248,9 @@ namespace Config {
 		
 		REFRESH_RADIUS,               // int: radius for visible area refresh in multiplayer
 
+		// Viewport Z layout: 0 = Classic (ground=7), 1 = Void (ground=70)
+		VIEWPORT_MODE,
+
 		// Invisible Items Color Settings
 		INVISIBLE_ITEMS_ENABLE_CUSTOM,    // bool: enable custom invisible item colors
 		INVISIBLE_INVALID_RED,            // int: red component for invalid items (id=0)

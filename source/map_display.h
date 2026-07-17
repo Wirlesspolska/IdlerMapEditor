@@ -127,6 +127,11 @@ public:
 	int GetFloor() const {
 		return floor;
 	}
+	int GetStackPeekOffset() const {
+		return stack_peek_offset;
+	}
+	void ChangeStackPeekOffset(int delta);
+	Item* GetInteractionTopItem(Tile* tile) const;
 	Editor& GetEditor() {
 		return editor;
 	}
@@ -172,6 +177,7 @@ private:
 
 	// View related
 	int floor;
+	int stack_peek_offset;
 	double zoom;
 	int cursor_x;
 	int cursor_y;

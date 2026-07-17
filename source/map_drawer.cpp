@@ -33,6 +33,7 @@
 #include "graphics.h"
 #include "settings.h"
 #include "complexitem.h"
+#include "viewport_z.h"
 
 #include "doodad_brush.h"
 #include "creature_brush.h"
@@ -337,24 +338,18 @@ void MapDrawer::SetupVars() {
 	zoom = (float)canvas->GetZoom();
 	tile_size = int(TileSize / zoom); // after zoom
 	floor = canvas->GetFloor();
+	stack_peek_offset = canvas->GetStackPeekOffset();
 
 	if (options.show_all_floors) {
-		if (floor <= GROUND_LAYER) {
-			start_z = GROUND_LAYER;
-		} else {
-			start_z = std::min(MAP_MAX_LAYER, floor + 2);
-		}
+		ViewportZ::GetDrawFloorRange(floor, true, start_z, end_z, superend_z, shade_z);
 	} else {
-		start_z = floor;
+		ViewportZ::GetDrawFloorRange(floor, false, start_z, end_z, superend_z, shade_z);
 	}
-
-	end_z = floor;
-	superend_z = (floor > GROUND_LAYER ? 8 : 0);
 
 	start_x = view_scroll_x / TileSize;
 	start_y = view_scroll_y / TileSize;
 
-	if (floor > GROUND_LAYER) {
+	if (ViewportZ::IsUnderground(floor)) {
 		start_x -= 2;
 		start_y -= 2;
 	}
@@ -538,11 +533,7 @@ void MapDrawer::DrawBackground() {
 }
 
 inline int getFloorAdjustment(int floor) {
-	if (floor > GROUND_LAYER) { // Underground
-		return 0; // No adjustment
-	} else {
-		return TileSize * (GROUND_LAYER - floor);
-	}
+	return ViewportZ::GetFloorPixelOffset(floor);
 }
 
 void MapDrawer::DrawMap() {
@@ -576,7 +567,7 @@ void MapDrawer::DrawMap() {
 	}
 
 	for (int map_z = start_z; map_z >= superend_z; map_z--) {
-		if (map_z == end_z && start_z != end_z && options.show_shade) {
+		if (map_z == shade_z && start_z != end_z && options.show_shade) {
 			// Draw shade
 			if (!only_colors) {
 				glDisable(GL_TEXTURE_2D);
@@ -614,7 +605,7 @@ void MapDrawer::DrawMap() {
 						}
 					}
 
-					if (!live_client || nd->isVisible(map_z > GROUND_LAYER)) {
+					if (!live_client || nd->isVisible(ViewportZ::IsUnderground(map_z))) {
 						for (int map_x = 0; map_x < 4; ++map_x) {
 							for (int map_y = 0; map_y < 4; ++map_y) {
 								TileLocation* location = nd->getTile(map_x, map_y, map_z);
@@ -626,10 +617,10 @@ void MapDrawer::DrawMap() {
 							}
 						}
 					} else {
-						if (!nd->isRequested(map_z > GROUND_LAYER)) {
+						if (!nd->isRequested(ViewportZ::IsUnderground(map_z))) {
 							// Request the node
-							editor.QueryNode(nd_map_x, nd_map_y, map_z > GROUND_LAYER);
-							nd->setRequested(map_z > GROUND_LAYER, true);
+							editor.QueryNode(nd_map_x, nd_map_y, ViewportZ::IsUnderground(map_z));
+							nd->setRequested(ViewportZ::IsUnderground(map_z), true);
 						}
 						int cy = (nd_map_y)*TileSize - view_scroll_y - getFloorAdjustment(floor);
 						int cx = (nd_map_x)*TileSize - view_scroll_x - getFloorAdjustment(floor);
@@ -667,12 +658,7 @@ void MapDrawer::DrawMap() {
 					}
 
 					int offset;
-					if (map_z <= GROUND_LAYER) {
-						offset = (GROUND_LAYER - map_z) * TileSize;
-					}
-					else {
-						offset = TileSize * (floor - map_z);
-					}
+					offset = ViewportZ::GetDrawPixelOffset(map_z, floor);
 
 					int draw_x = ((tile->getX() * TileSize) - view_scroll_x) - offset;
 					int draw_y = ((tile->getY() * TileSize) - view_scroll_y) - offset;
@@ -709,11 +695,7 @@ void MapDrawer::DrawMap() {
 					if (tile) {
 						// Compensate for underground/overground
 						int offset;
-						if (map_z <= GROUND_LAYER) {
-							offset = (GROUND_LAYER - map_z) * TileSize;
-						} else {
-							offset = TileSize * (floor - map_z);
-						}
+						offset = ViewportZ::GetDrawPixelOffset(map_z, floor);
 
 						int draw_x = ((map_x * TileSize) - view_scroll_x) - offset;
 						int draw_y = ((map_y * TileSize) - view_scroll_y) - offset;
@@ -772,12 +754,13 @@ void MapDrawer::DrawMap() {
 
 						// Draw items on the tile
 						if (zoom <= 10.0 || !options.hide_items_when_zoomed) {
-							ItemVector::iterator it;
-							for (it = tile->items.begin(); it != tile->items.end(); it++) {
-								if ((*it)->isBorder()) {
-									BlitItem(draw_x, draw_y, tile, *it, true, 160, r, g, b);
+							const size_t items_to_draw = tile->getVisibleItemCount(stack_peek_offset);
+							for (size_t item_index = 0; item_index < items_to_draw; ++item_index) {
+								Item* item = tile->items[item_index];
+								if (item->isBorder()) {
+									BlitItem(draw_x, draw_y, tile, item, true, 160, r, g, b);
 								} else {
-									BlitItem(draw_x, draw_y, tile, *it, true, 160, 160, 160, 160);
+									BlitItem(draw_x, draw_y, tile, item, true, 160, 160, 160, 160);
 								}
 							}
 							if (tile->creature && options.show_creatures) {
@@ -931,14 +914,10 @@ void MapDrawer::DrawDraggingShadow() {
 			// On screen and dragging?
 			if (pos.x + 2 > start_x && pos.x < end_x && pos.y + 2 > start_y && pos.y < end_y && (move_x != 0 || move_y != 0 || move_z != 0)) {
 				int offset;
-				if (pos.z <= GROUND_LAYER) {
-					offset = (GROUND_LAYER - pos.z) * TileSize;
-				} else {
-					offset = TileSize * (floor - pos.z);
-				}
+				offset = ViewportZ::GetDrawPixelOffset(pos.z, floor);
 				
 				sprintf(debug_msg, "DEBUG DRAG: Calculating offset - pos.z=%d, GROUND_LAYER=%d, floor=%d, TileSize=%d, offset=%d\n", 
-					pos.z, GROUND_LAYER, floor, TileSize, offset);
+					pos.z, ViewportZ::GetGroundLayer(), floor, TileSize, offset);
 				OutputDebugStringA(debug_msg);
 
 				int draw_x = ((pos.x * TileSize) - view_scroll_x) - offset;
@@ -998,11 +977,7 @@ void MapDrawer::DrawHigherFloors() {
 				Tile* tile = editor.map.getTile(map_x, map_y, map_z);
 				if (tile) {
 					int offset;
-					if (map_z <= GROUND_LAYER) {
-						offset = (GROUND_LAYER - map_z) * TileSize;
-					} else {
-						offset = TileSize * (floor - map_z);
-					}
+					offset = ViewportZ::GetDrawPixelOffset(map_z, floor);
 
 					int draw_x = ((map_x * TileSize) - view_scroll_x) - offset;
 					int draw_y = ((map_y * TileSize) - view_scroll_y) - offset;
@@ -1017,9 +992,9 @@ void MapDrawer::DrawHigherFloors() {
 						}
 					}
 					if (zoom <= g_settings.getInteger(Config::ITEM_DISPLAY_ZOOM_THRESHOLD) || !options.hide_items_when_zoomed) {
-						ItemVector::iterator it;
-						for (it = tile->items.begin(); it != tile->items.end(); it++) {
-							BlitItem(draw_x, draw_y, tile, *it, false, 255, 255, 255, 96);
+						const size_t items_to_draw = tile->getVisibleItemCount(stack_peek_offset);
+						for (size_t item_index = 0; item_index < items_to_draw; ++item_index) {
+							BlitItem(draw_x, draw_y, tile, tile->items[item_index], false, 255, 255, 255, 96);
 						}
 					}
 				}
@@ -1084,11 +1059,11 @@ void MapDrawer::DrawLiveCursors() {
 
 	LiveSocket& live = editor.GetLive();
 	for (LiveCursor& cursor : live.getCursorList()) {
-		if (cursor.pos.z <= GROUND_LAYER && floor > GROUND_LAYER) {
+		if (ViewportZ::IsSurfaceOrSky(cursor.pos.z) && ViewportZ::IsUnderground(floor)) {
 			continue;
 		}
 
-		if (cursor.pos.z > GROUND_LAYER && floor <= 8) {
+		if (ViewportZ::IsUnderground(cursor.pos.z) && floor <= ViewportZ::GetUndergroundStart()) {
 			continue;
 		}
 
@@ -1106,11 +1081,7 @@ void MapDrawer::DrawLiveCursors() {
 		}
 
 		int offset;
-		if (cursor.pos.z <= GROUND_LAYER) {
-			offset = (GROUND_LAYER - cursor.pos.z) * TileSize;
-		} else {
-			offset = TileSize * (floor - cursor.pos.z);
-		}
+		offset = ViewportZ::GetDrawPixelOffset(cursor.pos.z, floor);
 
 		// Draw a brush highlight around the cursor
 		const int brushSize = 1; // Size of brush (1 = 3x3 tiles, 2 = 5x5 tiles, etc.)
@@ -2139,11 +2110,7 @@ void MapDrawer::DrawTile(TileLocation* location) {
 	bool only_colors = as_minimap || options.show_only_colors;
 
 	int offset;
-	if (map_z <= GROUND_LAYER) {
-		offset = (GROUND_LAYER - map_z) * TileSize;
-	} else {
-		offset = TileSize * (floor - map_z);
-	}
+	offset = ViewportZ::GetDrawPixelOffset(map_z, floor);
 
 	int draw_x = ((map_x * TileSize) - view_scroll_x) - offset;
 	int draw_y = ((map_y * TileSize) - view_scroll_y) - offset;
@@ -2176,8 +2143,9 @@ void MapDrawer::DrawTile(TileLocation* location) {
 			b = b / 3 * 2;
 		}
 
-		int item_count = tile->items.size();
-		if (options.highlight_items && item_count > 0 && !tile->items.back()->isBorder()) {
+		int item_count = static_cast<int>(tile->getVisibleItemCount(stack_peek_offset));
+		Item* top_visible_item = tile->getTopVisibleItem(stack_peek_offset);
+		if (options.highlight_items && item_count > 0 && top_visible_item && !top_visible_item->isBorder()) {
 			static const float factor[5] = { 0.75f, 0.6f, 0.48f, 0.40f, 0.33f };
 			int idx = (item_count < 5 ? item_count : 5) - 1;
 			g = int(g * factor[idx]);
@@ -2291,20 +2259,22 @@ void MapDrawer::DrawTile(TileLocation* location) {
 	if (!only_colors) {
 		if (zoom < g_settings.getInteger(Config::ITEM_DISPLAY_ZOOM_THRESHOLD) || !options.hide_items_when_zoomed) {
 			// items on tile
-			for (ItemVector::iterator it = tile->items.begin(); it != tile->items.end(); it++) {
+			const size_t items_to_draw = tile->getVisibleItemCount(stack_peek_offset);
+			for (size_t item_index = 0; item_index < items_to_draw; ++item_index) {
+				Item* item = tile->items[item_index];
 				// item tooltip
 				if (options.show_tooltips && map_z == floor && zoom <= g_settings.getInteger(Config::TOOLTIP_MAX_ZOOM)) {
-					WriteTooltip(tile, *it, tooltip, tile->isHouseTile());
+					WriteTooltip(tile, item, tooltip, tile->isHouseTile());
 				}
 
 				// item animation
 				if (options.show_preview && zoom <= g_settings.getInteger(Config::ANIMATION_ZOOM_THRESHOLD)) {
-					(*it)->animate();
+					item->animate();
 				}
 
 				// item sprite
-				if ((*it)->isBorder()) {
-					BlitItem(draw_x, draw_y, tile, *it, false, r, g, b);
+				if (item->isBorder()) {
+					BlitItem(draw_x, draw_y, tile, item, false, r, g, b);
 				} else {
 					r = 255, g = 255, b = 255;
 
@@ -2330,12 +2300,15 @@ void MapDrawer::DrawTile(TileLocation* location) {
 							}
 						}
 					}
-					BlitItem(draw_x, draw_y, tile, *it, false, r, g, b);
+					BlitItem(draw_x, draw_y, tile, item, false, r, g, b);
 				}
 			}
 			// monster/npc on tile
-			if (tile->creature && options.show_creatures) {
+			if (tile->creature && options.show_creatures && stack_peek_offset == 0) {
 				BlitCreature(draw_x, draw_y, tile->creature);
+			}
+			if (stack_peek_offset != 0 && map_z == floor && tile->hasHiddenItems(stack_peek_offset)) {
+				BlitSquare(draw_x + TileSize - 6, draw_y, 255, 180, 0, 200, 6);
 			}
 		}
 

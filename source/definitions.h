@@ -118,12 +118,18 @@
 #define DEG2RAD (PI / 180.0)
 #define RAD2DEG (180.0 / DEG)
 
-// The height of the map (there should be more checks for this...)
-#define MAP_LAYERS 16
+// Hex-tree XY branching factor (must remain 16 — spatial index, not Z)
+#define MAP_TREE_CHILDREN 16
+// 4x4 tile locations stored inside each Floor chunk (must remain 16)
+#define MAP_FLOOR_SIZE 16
+// Z floor count. OTBM already stores z as uint8, so 0..255 is the natural cap.
+#define MAP_LAYERS 256
+#define MAP_MAX_LAYER 255
+// Live-client visibility packs overground/underground bits with this shift (not MAP_LAYERS)
+#define MAP_VISIBILITY_BIT_SHIFT 16
 
 #define MAP_MAX_WIDTH 65000
 #define MAP_MAX_HEIGHT 65000
-#define MAP_MAX_LAYER 15
 
 // The size of the tile in pixels
 constexpr int TileSize = 32;
@@ -132,7 +138,7 @@ constexpr int TileSize = 32;
 #define SPRITE_PIXELS 32
 #define SPRITE_PIXELS_SIZE SPRITE_PIXELS* SPRITE_PIXELS
 
-// The sea layer
+// The sea / ground layer (Classic viewport). Void mode uses Z=70 via ViewportZ helpers.
 #define GROUND_LAYER 7
 
 constexpr int ClientMapWidth = 17;

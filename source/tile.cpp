@@ -274,6 +274,47 @@ Item* Tile::getTopItem() const {
 	return nullptr;
 }
 
+size_t Tile::getVisibleItemCount(int stack_peek_offset) const {
+	if (stack_peek_offset == MAP_STACK_PEEK_GROUND_ONLY) {
+		return 0;
+	}
+	if (stack_peek_offset <= 0) {
+		return items.size();
+	}
+	const size_t peel = static_cast<size_t>(stack_peek_offset);
+	return items.size() > peel ? items.size() - peel : 0;
+}
+
+Item* Tile::getTopVisibleItem(int stack_peek_offset) const {
+	if (stack_peek_offset == MAP_STACK_PEEK_GROUND_ONLY) {
+		if (ground && !ground->isMetaItem()) {
+			return ground;
+		}
+		return nullptr;
+	}
+	if (stack_peek_offset <= 0) {
+		return getTopItem();
+	}
+	const size_t visible_count = getVisibleItemCount(stack_peek_offset);
+	if (visible_count > 0) {
+		return items[visible_count - 1];
+	}
+	if (ground && !ground->isMetaItem()) {
+		return ground;
+	}
+	return nullptr;
+}
+
+bool Tile::hasHiddenItems(int stack_peek_offset) const {
+	if (stack_peek_offset <= 0) {
+		return false;
+	}
+	if (stack_peek_offset == MAP_STACK_PEEK_GROUND_ONLY) {
+		return !items.empty();
+	}
+	return items.size() > static_cast<size_t>(stack_peek_offset);
+}
+
 Item* Tile::getItemAt(int index) const {
 	if (index < 0) {
 		return nullptr;

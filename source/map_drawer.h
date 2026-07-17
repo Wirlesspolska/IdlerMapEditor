@@ -282,10 +282,13 @@ class MapDrawer {
 	int mouse_map_x, mouse_map_y;
 	int start_x, start_y, start_z;
 	int end_x, end_y, end_z, superend_z;
+	int shade_z;
 	int view_scroll_x, view_scroll_y;
 	int screensize_x, screensize_y;
 	int tile_size;
 	int floor;
+
+	int stack_peek_offset;
 
 protected:
 	std::unordered_map<uint16_t, std::vector<FinderPosition>> zoneTiles;

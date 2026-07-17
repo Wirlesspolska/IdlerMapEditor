@@ -20,6 +20,7 @@
 #include <wx/collpane.h>
 
 #include "settings.h"
+#include "viewport_z.h"
 #include "gui_ids.h"
 #include "client_version.h"
 
@@ -203,6 +204,23 @@ wxNotebookPage* PreferencesWindow::CreateGeneralPage() {
 	position_format->SetSelection(g_settings.getInteger(Config::COPY_POSITION_FORMAT));
 	sizer->Add(position_format, 0, wxALL | wxEXPAND, 5);
 	SetWindowToolTip(tmptext, position_format, "The position format when copying from the map.");
+
+	wxArrayString viewport_choices;
+	viewport_choices.Add("Classic (ground Z=7, floors 0-15 style)");
+	viewport_choices.Add("Void (ground Z=70; sky 0-69 ±6; underground 71-255 ±2)");
+	viewport_mode_choice = newd wxChoice(general_page, wxID_ANY, wxDefaultPosition, wxDefaultSize, viewport_choices);
+	int viewport_mode = g_settings.getInteger(Config::VIEWPORT_MODE);
+	if (viewport_mode < 0 || viewport_mode >= static_cast<int>(viewport_choices.size())) {
+		viewport_mode = 0;
+	}
+	viewport_mode_choice->SetSelection(viewport_mode);
+	sizer->Add(newd wxStaticText(general_page, wxID_ANY, "Viewport Z layout:"), 0, wxLEFT | wxTOP, 5);
+	sizer->Add(viewport_mode_choice, 0, wxLEFT | wxRIGHT | wxBOTTOM | wxEXPAND, 5);
+	viewport_mode_choice->SetToolTip(
+		"Classic: original editor ground at Z=7.\n"
+		"Void: ground/sea at Z=70; surface/sky Z=0-69 with ±6 floor awareness; "
+		"underground Z=71-255 with ±2 awareness.\n"
+		"Does not convert map data — only changes how floors are viewed.");
 
 	general_page->SetSizer(sizer);
 	general_page->FitInside();
@@ -1192,6 +1210,12 @@ void PreferencesWindow::Apply() {
 	g_settings.setInteger(Config::WORKER_THREADS, worker_threads_spin->GetValue());
 	g_settings.setInteger(Config::REPLACE_SIZE, replace_size_spin->GetValue());
 	g_settings.setInteger(Config::COPY_POSITION_FORMAT, position_format->GetSelection());
+	const int previous_viewport = g_settings.getInteger(Config::VIEWPORT_MODE);
+	g_settings.setInteger(Config::VIEWPORT_MODE, viewport_mode_choice->GetSelection());
+	if (previous_viewport != viewport_mode_choice->GetSelection() && g_gui.IsEditorOpen()) {
+		g_gui.ChangeFloor(ViewportZ::GetGroundLayer());
+	}
+	g_gui.RefreshView();
 	g_settings.setInteger(Config::AUTO_SAVE_ENABLED, autosave_chkbox->GetValue());
 	g_settings.setInteger(Config::AUTO_SAVE_INTERVAL, autosave_interval_spin->GetValue());
 

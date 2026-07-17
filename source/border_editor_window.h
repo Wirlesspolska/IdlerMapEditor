@@ -51,9 +51,30 @@ enum BorderAlignment {
     ALIGN_INNER
 };
 
+enum class BorderAutoMatchForceMode {
+    Auto,
+    OpaqueOnly,
+    TransparentOnly,
+};
+
+enum BorderAutoMatchSelectedAlgorithm {
+    BORDER_MATCH_ALGO_OPAQUE = 0,
+    BORDER_MATCH_ALGO_TRANSPARENT = 1,
+};
+
+bool AutoMatchBorderSprites(
+    uint16_t seedItemId,
+    int minItemId,
+    int maxItemId,
+    uint16_t groundItemId,
+    BorderAutoMatchForceMode forceMode,
+    std::map<BorderEdgePosition, uint16_t>& outMatches,
+    wxString& summary);
+
 // Visual modes for the border grid panel
 enum BorderGridViewMode {
     GRID_VIEW_EDGES,   // 3x3 slot editor for all 12 edge types
+    GRID_VIEW_LOOP,    // Loop of sides/chips + separate L|C corner panel
     GRID_VIEW_MAP,     // Neighborhood map preview
     GRID_VIEW_OUTER,   // Outer alignment preview
     GRID_VIEW_INNER    // Inner alignment preview
@@ -135,7 +156,9 @@ public:
     void OnCreateTileset(wxCommandEvent& event);
     void OnTestBrush(wxCommandEvent& event);
     void OnZOrderChoice(wxCommandEvent& event);
-    void OnAutoMatch(wxCommandEvent& event);
+    void OnAutoMatchOpaque(wxCommandEvent& event);
+    void OnAutoMatchReverse(wxCommandEvent& event);
+    void OnGridViewTabChanged(wxNotebookEvent& event);
 
 protected:
     void CreateGUIControls();
@@ -149,6 +172,7 @@ protected:
     bool ValidateGroundBrush();
     void UpdatePreview();
     void ApplyAutoMatchedBorders(const std::map<BorderEdgePosition, uint16_t>& matches);
+    void RunAutoMatchDirect(BorderAutoMatchForceMode mode, const wxString& title);
     void ClearItems();
     void ClearGroundItems();
     void UpdateGroundItemsList();
@@ -211,6 +235,7 @@ public:
     
     // Border grid
     BorderGridPanel* m_gridPanel;
+    wxNotebook* m_gridViewNotebook;
     
     // Border item buttons for each position
     std::map<BorderEdgePosition, BorderItemButton*> m_borderButtons;
@@ -276,6 +301,7 @@ public:
     BorderGridViewMode GetViewMode() const { return m_viewMode; }
     void SetCenterGroundItemId(uint16_t itemId);
     uint16_t GetCenterGroundItemId() const { return m_centerGroundItemId; }
+    std::map<BorderEdgePosition, uint16_t> GetAllItems() const { return m_items; }
     
     void OnPaint(wxPaintEvent& event);
     void OnMouseClick(wxMouseEvent& event);
@@ -285,6 +311,7 @@ public:
 
 private:
     void DrawEdgeLayout(wxDC& dc, const wxRect& rect);
+    void DrawLoopLayout(wxDC& dc, const wxRect& rect);
     void DrawMapPreview(wxDC& dc, const wxRect& rect, bool innerStyle);
     void DrawSpriteForItem(wxDC& dc, uint16_t itemId, int x, int y, int w, int h) const;
     void DrawEdgeZone(wxDC& dc, BorderEdgePosition pos, const wxRect& zone);
@@ -292,10 +319,17 @@ private:
     wxRect GetDualCellSecondaryZone(const wxRect& cellRect) const;
     wxRect GetSingleCellSpriteZone(const wxRect& cellRect) const;
     void GetEdgeCellRect(int col, int row, const wxRect& panelRect, wxRect& out) const;
+    void GetLoopLayoutAreas(const wxRect& panelRect, wxRect& loopArea, wxRect& cornerArea) const;
+    void GetLoopCellRect(int col, int row, const wxRect& loopArea, wxRect& out) const;
+    BorderEdgePosition LoopCellPosition(int col, int row) const;
+    BorderEdgePosition CornerGridPosition(int col, int row) const;
+    void GetCornerGridCellRect(int col, int row, const wxRect& cornerArea, wxRect& out) const;
     BorderEdgePosition HitTestEdgeCell(int x, int y, const wxRect& rect) const;
+    BorderEdgePosition HitTestLoopLayout(int x, int y, const wxRect& rect) const;
 
     std::map<BorderEdgePosition, uint16_t> m_items;
     BorderEdgePosition m_selectedPosition;
+    BorderEdgePosition m_dragStartPosition;
     BorderGridViewMode m_viewMode;
     uint16_t m_centerGroundItemId;
 
@@ -318,6 +352,59 @@ public:
 private:
     std::vector<BorderItem> m_borderItems;
     
+    DECLARE_EVENT_TABLE()
+};
+
+class BorderAutoMatchPreviewDialog : public wxDialog {
+public:
+    BorderAutoMatchPreviewDialog(
+        wxWindow* parent,
+        uint16_t seedItemId,
+        int fromId,
+        int toId,
+        uint16_t groundItemId,
+        const std::map<BorderEdgePosition, uint16_t>& opaqueMatches,
+        const std::map<BorderEdgePosition, uint16_t>& transparentMatches,
+        const wxString& opaqueSummary,
+        const wxString& transparentSummary);
+    virtual ~BorderAutoMatchPreviewDialog();
+
+    std::map<BorderEdgePosition, uint16_t> GetResultMatches() const;
+
+    void OnMatchGridCellClicked(BorderEdgePosition pos);
+
+private:
+    void RefreshAlgorithmViews();
+    void ApplyMatchesToEditGrid(const std::map<BorderEdgePosition, uint16_t>& matches);
+    std::map<BorderEdgePosition, uint16_t> CollectEditGridMatches() const;
+    void RerunBothAlgorithms();
+    void UpdateAlgorithmChoiceButtons();
+
+    void OnPickOpaque(wxCommandEvent& event);
+    void OnPickTransparent(wxCommandEvent& event);
+    void OnReroll(wxCommandEvent& event);
+    void OnApply(wxCommandEvent& event);
+
+    uint16_t m_seedItemId;
+    int m_fromId;
+    int m_toId;
+    uint16_t m_groundItemId;
+
+    std::map<BorderEdgePosition, uint16_t> m_opaqueMatches;
+    std::map<BorderEdgePosition, uint16_t> m_transparentMatches;
+    wxString m_opaqueSummary;
+    wxString m_transparentSummary;
+
+    BorderAutoMatchSelectedAlgorithm m_selectedAlgorithm;
+
+    BorderPreviewPanel* m_opaquePreview;
+    BorderPreviewPanel* m_transparentPreview;
+    wxStaticText* m_opaqueSummaryLabel;
+    wxStaticText* m_transparentSummaryLabel;
+    wxButton* m_pickOpaqueBtn;
+    wxButton* m_pickTransparentBtn;
+    BorderGridPanel* m_editGrid;
+
     DECLARE_EVENT_TABLE()
 };
 

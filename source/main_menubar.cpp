@@ -63,6 +63,7 @@
 #include "extension_window.h"
 #include "find_item_window.h"
 #include "settings.h"
+#include "viewport_z.h"
 #include "automagic_settings.h"
 #include "find_creature_window.h"
 #include "map.h"
@@ -1800,13 +1801,18 @@ namespace OnMapRemoveUnreachable {
 			int ey = std::min(pos.y + 8, 65535);
 			int sz, ez;
 
-			if (pos.z <= GROUND_LAYER) {
-				sz = 0;
-				ez = 9;
-	} else {
+			if (ViewportZ::IsSurfaceOrSky(pos.z)) {
+				if (ViewportZ::IsVoid()) {
+					sz = std::max(0, pos.z - ViewportZ::VOID_SURFACE_AWARENESS);
+					ez = std::min(ViewportZ::GetGroundLayer(), pos.z + ViewportZ::VOID_SURFACE_AWARENESS);
+				} else {
+					sz = 0;
+					ez = 9;
+				}
+			} else {
 				// underground
-				sz = std::max(pos.z - 2, GROUND_LAYER);
-				ez = std::min(pos.z + 2, MAP_MAX_LAYER);
+				sz = std::max(pos.z - ViewportZ::UNDERGROUND_AWARENESS, ViewportZ::GetGroundLayer());
+				ez = std::min(pos.z + ViewportZ::UNDERGROUND_AWARENESS, MAP_MAX_LAYER);
 			}
 
 			for (int z = sz; z <= ez; ++z) {
@@ -1891,12 +1897,17 @@ void MainMenuBar::OnMapRemoveUnreachable(wxCommandEvent& WXUNUSED(event)) {
                 int ey = std::min(pos.y + yRange, 65535);
                 int sz, ez;
 
-                if (pos.z <= GROUND_LAYER) {
-                    sz = 0;
-                    ez = 9;
+                if (ViewportZ::IsSurfaceOrSky(pos.z)) {
+                    if (ViewportZ::IsVoid()) {
+                        sz = std::max(0, pos.z - ViewportZ::VOID_SURFACE_AWARENESS);
+                        ez = std::min(ViewportZ::GetGroundLayer(), pos.z + ViewportZ::VOID_SURFACE_AWARENESS);
+                    } else {
+                        sz = 0;
+                        ez = 9;
+                    }
                 } else {
-                    sz = std::max(pos.z - 2, GROUND_LAYER);
-                    ez = std::min(pos.z + 2, MAP_MAX_LAYER);
+                    sz = std::max(pos.z - ViewportZ::UNDERGROUND_AWARENESS, ViewportZ::GetGroundLayer());
+                    ez = std::min(pos.z + ViewportZ::UNDERGROUND_AWARENESS, MAP_MAX_LAYER);
                 }
 
                 for (int z = sz; z <= ez; ++z) {

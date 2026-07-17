@@ -19,6 +19,7 @@
 
 #include "action.h"
 #include "settings.h"
+#include "viewport_z.h"
 #include "map.h"
 #include "editor.h"
 #include "gui.h"
@@ -161,7 +162,7 @@ void Action::commit(DirtyList* dirty_list) {
 
 				if (editor.IsLiveClient()) {
 					QTreeNode* nd = editor.map.getLeaf(pos.x, pos.y);
-					if (!nd || !nd->isVisible(pos.z > GROUND_LAYER)) {
+					if (!nd || !nd->isVisible(ViewportZ::IsUnderground(pos.z))) {
 						// Delete all changes that affect tiles outside our view
 						c->clear();
 						++it;
@@ -310,7 +311,7 @@ void Action::undo(DirtyList* dirty_list) {
 
 				if (editor.IsLiveClient()) {
 					QTreeNode* nd = editor.map.getLeaf(pos.x, pos.y);
-					if (!nd || !nd->isVisible(pos.z > GROUND_LAYER)) {
+					if (!nd || !nd->isVisible(ViewportZ::IsUnderground(pos.z))) {
 						// Delete all changes that affect tiles outside our view
 						c->clear();
 						++it;

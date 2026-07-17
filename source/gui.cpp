@@ -172,6 +172,7 @@
 #include "map_window.h"
 #include "application.h"
 #include "welcome_dialog.h"
+#include "new_map_dialog.h"
 
 #include "live_client.h"
 #include "live_tab.h"
@@ -735,11 +736,19 @@ void GUI::FitViewToMap(MapTab* mt) {
 }
 
 bool GUI::NewMap() {
+	NewMapDialog dialog(IsWelcomeDialogShown() ? static_cast<wxWindow*>(welcomeDialog) : static_cast<wxWindow*>(root));
+	if (dialog.ShowModal() != wxID_OK) {
+		return false;
+	}
+
+	ClientVersionID version_id = dialog.GetSelectedVersion();
+	FileName map_path(dialog.GetMapPath());
+
 	FinishWelcomeDialog();
 
 	Editor* editor;
 	try {
-		editor = newd Editor(copybuffer);
+		editor = newd Editor(copybuffer, version_id, map_path);
 	} catch (std::runtime_error& e) {
 		PopupDialog(root, "Error!", wxString(e.what(), wxConvUTF8), wxOK);
 		return false;

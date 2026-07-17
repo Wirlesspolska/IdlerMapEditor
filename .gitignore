@@ -29,6 +29,8 @@ vcproj/enc_temp_folder/*
 *.obj
 *.db
 *.opendb
+*.pch
+*.ipch
 
 vcproj/ipch/
 vcproj/Beta Release/

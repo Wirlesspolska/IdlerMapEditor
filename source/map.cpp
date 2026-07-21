@@ -53,7 +53,9 @@ Map::~Map() {
 }
 
 bool Map::ensureDefaultTown() {
-	if (towns.getTown(kDefaultTownId) != nullptr) {
+	// Only seed City (ID 0) on empty town lists (new / broken maps).
+	// Maps that already define towns (often starting at ID 1) must not get town 0 injected.
+	if (towns.count() != 0) {
 		return false;
 	}
 

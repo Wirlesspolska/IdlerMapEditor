@@ -1,0 +1,62 @@
+# Default: API only on :8787 (no domain required)
+# With TLS proxy:  docker compose --profile proxy up -d
+# Or use:         ./deploy.sh up --domain example.com --email you@example.com
+
+services:
+  marketplace:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: rmevip/sharemarketplace:latest
+    container_name: sharemarketplace
+    restart: unless-stopped
+    environment:
+      SHAREMARKETPLACE_BIND: "0.0.0.0:8787"
+      SHAREMARKETPLACE_DATA: "/data"
+      RUST_LOG: "${RUST_LOG:-sharemarketplace=info,tower_http=info}"
+      SHAREMARKETPLACE_TLS_ALLOW_HOST: "${SHAREMARKETPLACE_TLS_ALLOW_HOST:-}"
+      SHAREMARKETPLACE_TLS_ALLOW_SUFFIX: "${SHAREMARKETPLACE_TLS_ALLOW_SUFFIX:-}"
+    volumes:
+      - marketplace_data:/data
+    networks:
+      - marketplace_net
+    ports:
+      - "${MARKETPLACE_PUBLISH:-8787}:8787"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8787/v1/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  caddy:
+    profiles: ["proxy"]
+    image: caddy:2.9-alpine
+    container_name: sharemarketplace-caddy
+    restart: unless-stopped
+    depends_on:
+      marketplace:
+        condition: service_healthy
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      MARKETPLACE_HOST: "${MARKETPLACE_HOST:-localhost}"
+      MARKETPLACE_BASE_DOMAIN: "${MARKETPLACE_BASE_DOMAIN:-}"
+      ACME_EMAIL: "${ACME_EMAIL:-}"
+    volumes:
+      - ./deploy/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - marketplace_net
+
+volumes:
+  marketplace_data:
+  caddy_data:
+  caddy_config:
+
+networks:
+  marketplace_net:
+    driver: bridge

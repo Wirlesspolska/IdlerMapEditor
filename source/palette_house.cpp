@@ -296,7 +296,7 @@ void HousePalettePanel::OnUpdate() {
 		return;
 	}
 
-	// Repair maps missing the required default town (ID 0 / City)
+	// Seed City (ID 0) only when the map has no towns at all
 	map->ensureDefaultTown();
 
 	if (map->towns.count() != 0) {

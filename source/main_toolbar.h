@@ -42,6 +42,7 @@ public:
 	void RegisterHotkeys();
 
 	void OnStandardButtonClick(wxCommandEvent& event);
+	void OnExportMapJsonButtonClick(wxCommandEvent& event);
 	void OnBrushesButtonClick(wxCommandEvent& event);
 	void OnPositionButtonClick(wxCommandEvent& event);
 	void OnPositionKeyUp(wxKeyEvent& event);
@@ -72,6 +73,7 @@ private:
 	NumberTextCtrl* y_control;
 	NumberTextCtrl* z_control;
 	wxButton* go_button;
+	wxButton* export_json_button;
 	wxAuiToolBar* sizes_toolbar;
 	wxAuiToolBar* brush_size_toolbar;
 	NumberTextCtrl* brush_width_control;

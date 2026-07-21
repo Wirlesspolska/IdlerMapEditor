@@ -41,6 +41,9 @@ public:
 	// Clears the copybuffer (eg. resets it)
 	void clear();
 
+	// Take ownership of an already-filled buffer map (e.g. marketplace JSON → paste hand).
+	void assignTiles(BaseMap* map, const Position& topLeft);
+
 	size_t GetTileCount();
 
 	BaseMap& getBufferMap();

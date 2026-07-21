@@ -77,6 +77,9 @@ public:
 		return border_items.empty() ? 0 : border_items.front().id;
 	}
 
+	// Collect all border tile item IDs linked to this ground brush (from borders.xml refs).
+	void getRelatedBorderItemIds(std::vector<uint16_t>& out) const;
+
 protected: // Members
 	int32_t z_order;
 	bool has_zilch_outer_border;

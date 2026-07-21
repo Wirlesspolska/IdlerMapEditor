@@ -1,0 +1,6 @@
+/target/
+/data/
+.env
+docker-compose.override.yml
+docker-compose.deploy.yml
+deploy/state/

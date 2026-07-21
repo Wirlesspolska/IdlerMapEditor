@@ -1,0 +1,11 @@
+target
+data
+.git
+.gitignore
+*.md
+.env
+.env.*
+deploy/caddy/Caddyfile.generated
+deploy/state
+**/*.swp
+**/.DS_Store

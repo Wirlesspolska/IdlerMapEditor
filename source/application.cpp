@@ -30,6 +30,7 @@
 #include "updater.h"
 #include "artprovider.h"
 #include "dark_mode_manager.h"
+#include "marketplace_window.h"
 
 #include "materials.h"
 #include "map.h"
@@ -234,6 +235,15 @@ bool Application::OnInit() {
 		g_gui.root->Show();
 	}
 
+	// Defer marketplace presence until after OnInit returns (avoids blocking sockets / init races).
+	if (g_gui.root) {
+		g_gui.root->CallAfter([]() {
+			if (g_gui.root) {
+				g_marketplacePresence.Start(g_gui.root);
+			}
+		});
+	}
+
 	// Set idle event handling mode
 	wxIdleEvent::SetMode(wxIDLE_PROCESS_SPECIFIED);
 
@@ -340,6 +350,11 @@ void Application::FixVersionDiscrapencies() {
 }
 
 void Application::Unload() {
+	g_marketplacePresence.Stop();
+	if (g_gui.marketplace_window) {
+		g_gui.marketplace_window->Destroy();
+		g_gui.ClearMarketplaceWindow();
+	}
 	g_gui.CloseAllEditors();
 	g_gui.UnloadVersion();
 	g_gui.SaveHotkeys();
@@ -435,8 +450,11 @@ MainFrame::MainFrame(const wxString& title, const wxPoint& pos, const wxSize& si
 	}
 
 	wxStatusBar* statusbar = CreateStatusBar();
-	statusbar->SetFieldsCount(4);
+	statusbar->SetFieldsCount(5);
+	int statusWidths[5] = { -1, 220, 140, 80, 180 };
+	statusbar->SetStatusWidths(5, statusWidths);
 	SetStatusText(wxString("Welcome to ") << __W_RME_APPLICATION_NAME__ << " " << __W_RME_VERSION__);
+	SetStatusText(wxT("[..] Marketplace"), 4);
 
 	// Le sizer
 	g_gui.aui_manager = newd wxAuiManager(this);

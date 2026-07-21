@@ -38,6 +38,10 @@
 
 #include "live_server.h"
 #include "live_client.h"
+
+#include <wx/mstream.h>
+#include <algorithm>
+#include <vector>
 #include "live_action.h"
 #include "minimap_window.h"
 #include "borderize_window.h"
@@ -503,6 +507,96 @@ bool Editor::exportSelectionAsMiniMap(FileName directory, wxString fileName) {
 	}
 
 	return true;
+}
+
+bool Editor::exportSelectionPreviewPng(std::vector<uint8_t>& outPng, int maxDim) {
+	outPng.clear();
+	if (!hasSelection()) {
+		return false;
+	}
+
+	if (maxDim < 16) {
+		maxDim = 16;
+	}
+	if (maxDim > 512) {
+		maxDim = 512;
+	}
+
+	int min_x = MAP_MAX_WIDTH + 1, min_y = MAP_MAX_HEIGHT + 1, min_z = MAP_MAX_LAYER + 1;
+	int max_x = 0, max_y = 0, max_z = 0;
+
+	const TileSet& tiles = selection.getTiles();
+	for (Tile* tile : tiles) {
+		if (!tile || tile->empty()) {
+			continue;
+		}
+		const Position pos = tile->getPosition();
+		min_x = std::min(min_x, pos.x);
+		max_x = std::max(max_x, pos.x);
+		min_y = std::min(min_y, pos.y);
+		max_y = std::max(max_y, pos.y);
+		min_z = std::min(min_z, pos.z);
+		max_z = std::max(max_z, pos.z);
+	}
+
+	if (min_x > max_x || min_y > max_y) {
+		return false;
+	}
+
+	const int floor = (min_z <= GROUND_LAYER && GROUND_LAYER <= max_z) ? GROUND_LAYER : min_z;
+	int width = max_x - min_x + 1;
+	int height = max_y - min_y + 1;
+	if (width <= 0 || height <= 0) {
+		return false;
+	}
+
+	uint8_t* pixels = newd uint8_t[static_cast<size_t>(width) * static_cast<size_t>(height) * 3];
+	memset(pixels, 0, static_cast<size_t>(width) * static_cast<size_t>(height) * 3);
+
+	for (Tile* tile : tiles) {
+		if (!tile || tile->getZ() != floor || tile->empty()) {
+			continue;
+		}
+
+		uint8_t color = 0;
+		for (Item* item : tile->items) {
+			if (item->getMiniMapColor() != 0) {
+				color = item->getMiniMapColor();
+				break;
+			}
+		}
+		if (color == 0 && tile->hasGround()) {
+			color = tile->ground->getMiniMapColor();
+		}
+
+		const uint32_t index = static_cast<uint32_t>(((tile->getY() - min_y) * width + (tile->getX() - min_x)) * 3);
+		pixels[index] = static_cast<uint8_t>(int(color / 36) % 6 * 51);
+		pixels[index + 1] = static_cast<uint8_t>(int(color / 6) % 6 * 51);
+		pixels[index + 2] = static_cast<uint8_t>(color % 6 * 51);
+	}
+
+	wxImage image(width, height, pixels, true);
+	if (width > maxDim || height > maxDim) {
+		const double scale = std::min(static_cast<double>(maxDim) / width, static_cast<double>(maxDim) / height);
+		const int newW = std::max(1, static_cast<int>(width * scale));
+		const int newH = std::max(1, static_cast<int>(height * scale));
+		image.Rescale(newW, newH, wxIMAGE_QUALITY_NEAREST);
+	}
+
+	wxMemoryOutputStream stream;
+	if (!image.SaveFile(stream, wxBITMAP_TYPE_PNG)) {
+		delete[] pixels;
+		return false;
+	}
+	delete[] pixels;
+
+	const wxStreamBuffer* buf = stream.GetOutputStreamBuffer();
+	if (!buf || buf->GetBufferSize() == 0) {
+		return false;
+	}
+	const char* start = static_cast<const char*>(buf->GetBufferStart());
+	outPng.assign(start, start + buf->Tell());
+	return !outPng.empty();
 }
 
 bool Editor::importMap(FileName filename, int import_x_offset, int import_y_offset, ImportType house_import_type, ImportType spawn_import_type) {

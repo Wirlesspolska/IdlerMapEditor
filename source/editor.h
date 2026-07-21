@@ -27,6 +27,8 @@
 #include "selection.h"
 #include "minimap_window.h"
 
+#include <vector>
+
 class BaseMap;
 class CopyBuffer;
 class LiveClient;
@@ -99,6 +101,8 @@ public: // Functions
 	bool importMiniMap(FileName filename, int import, int import_x_offset, int import_y_offset, int import_z_offset);
 	bool exportMiniMap(FileName filename, int floor /*= GROUND_LAYER*/, bool displaydialog);
 	bool exportSelectionAsMiniMap(FileName directory, wxString fileName);
+	// Render selection AABB (single floor, preferred = current/ground) to a PNG in memory.
+	bool exportSelectionPreviewPng(std::vector<uint8_t>& outPng, int maxDim = 512);
 
 	// Adds an action to the action queue (this allows the user to undo the action)
 	// Invalidates the action pointer

@@ -23,6 +23,9 @@
 
 #include "brush_enums.h"
 
+#include <vector>
+#include <map>
+
 // Thanks to a million forward declarations, we don't have to include any files!
 // TODO move to a declarations file.
 class ItemType;
@@ -77,10 +80,16 @@ public:
 		return brushes;
 	}
 
+	typedef std::map<uint32_t, AutoBorder*> BorderMap;
+	const BorderMap& getBorders() const {
+		return borders;
+	}
+	AutoBorder* getBorder(uint32_t id) const;
+	void collectBordersContaining(uint16_t itemId, std::vector<AutoBorder*>& out) const;
+
 	void removeBorder(uint32_t id);
 
 protected:
-	typedef std::map<uint32_t, AutoBorder*> BorderMap;
 	BrushMap brushes;
 	BorderMap borders;
 

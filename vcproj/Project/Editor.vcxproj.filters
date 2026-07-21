@@ -130,6 +130,9 @@
     <ClInclude Include="..\..\source\iomap_otbm.h">
       <Filter>editor\io</Filter>
     </ClInclude>
+    <ClInclude Include="..\..\source\map_json_export.h">
+      <Filter>editor\io</Filter>
+    </ClInclude>
     <ClInclude Include="..\..\source\item.h">
       <Filter>objects</Filter>
     </ClInclude>
@@ -408,6 +411,9 @@
     <ClInclude Include="..\..\source\wallize_window.h" />
     <ClInclude Include="..\..\source\notes_window.h" />
     <ClInclude Include="..\..\source\recent_brushes_window.h" />
+    <ClInclude Include="..\..\source\proposed_brushes_window.h" />
+    <ClInclude Include="..\..\source\marketplace_client.h" />
+    <ClInclude Include="..\..\source\marketplace_window.h" />
     <ClInclude Include="..\..\source\monster_maker_window.h" />
     <ClInclude Include="..\..\source\monster_manager.h" />
     <ClInclude Include="..\..\source\color_palette_ctrl.h">
@@ -654,6 +660,9 @@
     <ClCompile Include="..\..\source\iomap_otbm.cpp">
       <Filter>editor\io</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\source\map_json_export.cpp">
+      <Filter>editor\io</Filter>
+    </ClCompile>
     <ClCompile Include="..\..\source\table_brush.cpp">
       <Filter>editor\brushes</Filter>
     </ClCompile>
@@ -735,6 +744,9 @@
     <ClCompile Include="..\..\source\wallize_window.cpp" />
     <ClCompile Include="..\..\source\notes_window.cpp" />
     <ClCompile Include="..\..\source\recent_brushes_window.cpp" />
+    <ClCompile Include="..\..\source\proposed_brushes_window.cpp" />
+    <ClCompile Include="..\..\source\marketplace_client.cpp" />
+    <ClCompile Include="..\..\source\marketplace_window.cpp" />
     <ClCompile Include="..\..\source\monster_maker_window.cpp" />
     <ClCompile Include="..\..\source\monster_manager.cpp" />
     <ClCompile Include="..\..\source\color_palette_ctrl.cpp">

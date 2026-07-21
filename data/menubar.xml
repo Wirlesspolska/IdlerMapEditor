@@ -39,10 +39,12 @@
 		<separator/>
 		<menu name="Import">
 			<item name="Import Map..." action="IMPORT_MAP" help="Import map data from another map file."/>
+			<item name="Import Map from JSON..." action="IMPORT_MAP_JSON" help="Import an rme-map-patch JSON file (tiles and simplified fills)."/>
 			<item name="Import Monsters/NPC..." action="IMPORT_MONSTERS" help="Import either a monsters.xml file or a specific monster/NPC."/>
 		</menu>
 		<menu name="Export">
 			<item name="Export Minimap..." action="EXPORT_MINIMAP" help="Export minimap to an image file."/>
+			<item name="Export Map to JSON..." action="EXPORT_MAP_JSON" help="Export selection or region as JSON map patches for worldgen."/>
 			<item name="Export Tilesets..." action="EXPORT_TILESETS" help="Export tilesets to an xml file."/>
 		</menu>
 		<menu name="Reload">
@@ -266,6 +268,8 @@
 	
 <item name="Notes..." hotkey="Ctrl+N" action="MAP_NOTES" help="Create or edit notes for this map."/>
 	<item name="Recent Brushes" hotkey="Shift+ALT+R" action="WIN_RECENT_BRUSHES" help="Shows recently used brushes for quick access."/>
+	<item name="Proposed Brush" hotkey="Shift+ALT+P" action="WIN_PROPOSED_BRUSHES" help="Suggests brushes with similar flags, colors, or related borders."/>
+	<item name="Share Marketplace" hotkey="Shift+ALT+M" action="WIN_MARKETPLACE" help="Browse and share JSON map patches with preview images."/>
 	<separator/>
 		<item name="Monster Maker" hotkey="" action="SHOW_MONSTER_MAKER" help="Create and edit monsters with visual interface"/>
 		<item name="Add New Creature" hotkey="" action="ADD_NEW_CREATURE" help="Create new placeable creatures for map editor"/>

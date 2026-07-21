@@ -175,6 +175,23 @@ void Brushes::removeBorder(uint32_t id) {
 	}
 }
 
+AutoBorder* Brushes::getBorder(uint32_t id) const {
+	auto it = borders.find(id);
+	if (it != borders.end()) {
+		return it->second;
+	}
+	return nullptr;
+}
+
+void Brushes::collectBordersContaining(uint16_t itemId, std::vector<AutoBorder*>& out) const {
+	for (BorderMap::const_iterator it = borders.begin(); it != borders.end(); ++it) {
+		AutoBorder* border = it->second;
+		if (border && border->hasItemId(itemId)) {
+			out.push_back(border);
+		}
+	}
+}
+
 bool Brushes::unserializeBorder(pugi::xml_node node, wxArrayString& warnings) {
 	pugi::xml_attribute attribute = node.attribute("id");
 	if (!attribute) {

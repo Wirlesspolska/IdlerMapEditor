@@ -136,6 +136,101 @@ protected:
 };
 
 /**
+ * Import an rme-map-patch JSON file (tiles + simplified fills).
+ */
+class ImportMapJsonWindow : public wxDialog {
+public:
+	ImportMapJsonWindow(wxWindow* parent, Editor& editor);
+	virtual ~ImportMapJsonWindow();
+
+	void OnClickBrowse(wxCommandEvent&);
+	void OnClickOK(wxCommandEvent&);
+	void OnClickCancel(wxCommandEvent&);
+
+protected:
+	Editor& editor;
+	wxTextCtrl* file_text_field;
+	wxSpinCtrl* x_offset_ctrl;
+	wxSpinCtrl* y_offset_ctrl;
+	wxSpinCtrl* z_offset_ctrl;
+	wxCheckBox* merge_checkbox;
+	wxCheckBox* import_spawns_checkbox;
+	wxCheckBox* import_houses_checkbox;
+
+	DECLARE_EVENT_TABLE();
+};
+
+/**
+ * Export a map region (selection / from-to / whole map batched) to JSON patches.
+ * Modeless so From/To can be picked by clicking the map.
+ */
+class ExportMapJsonWindow : public wxDialog {
+public:
+	ExportMapJsonWindow(wxWindow* parent, Editor& editor);
+	virtual ~ExportMapJsonWindow();
+
+	void OnClickBrowse(wxCommandEvent&);
+	void OnDirectoryChanged(wxKeyEvent&);
+	void OnFileNameChanged(wxKeyEvent&);
+	void OnClickOK(wxCommandEvent&);
+	void OnClickCancel(wxCommandEvent&);
+	void OnModeChange(wxCommandEvent&);
+	void OnPickFrom(wxCommandEvent&);
+	void OnPickTo(wxCommandEvent&);
+	void OnUseSelection(wxCommandEvent&);
+	void OnClose(wxCloseEvent&);
+
+	// Called by map canvas when pick mode is active.
+	void SetPickedPosition(const Position& pos);
+	void CancelPickMode();
+	bool IsPickingFrom() const {
+		return pick_target == PICK_FROM;
+	}
+	bool IsPickingTo() const {
+		return pick_target == PICK_TO;
+	}
+	bool IsPicking() const {
+		return pick_target != PICK_NONE;
+	}
+
+protected:
+	void CheckValues();
+	void UpdateModeControls();
+	void UpdatePickButtonLabels();
+	void StartPick(int target);
+	void CloseWindow();
+
+	enum {
+		PICK_NONE = 0,
+		PICK_FROM,
+		PICK_TO
+	};
+
+	Editor& editor;
+
+	wxStaticText* error_field;
+	wxStaticText* pick_hint_label;
+	wxTextCtrl* directory_text_field;
+	wxTextCtrl* file_name_text_field;
+	wxChoice* mode_choice;
+	PositionCtrl* from_ctrl;
+	PositionCtrl* to_ctrl;
+	wxButton* pick_from_button;
+	wxButton* pick_to_button;
+	wxButton* use_selection_button;
+	wxCheckBox* include_empty_checkbox;
+	wxCheckBox* include_spawns_checkbox;
+	wxCheckBox* include_houses_checkbox;
+	wxCheckBox* relative_coords_checkbox;
+	wxCheckBox* simplify_ground_checkbox;
+	wxSpinCtrl* chunk_size_spin;
+	wxButton* ok_button;
+	int pick_target;
+
+	DECLARE_EVENT_TABLE();
+};
+
+/**
  * The export tilesets dialog, select output path.
  */
 class ExportTilesetsWindow : public wxDialog {

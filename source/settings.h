@@ -151,6 +151,8 @@ namespace Config {
 		MINIMAP_VIEW_BOX,
 		MINIMAP_EXPORT_DIR,
 		TILESET_EXPORT_DIR,
+		MAP_JSON_EXPORT_DIR,
+		PROPOSED_BRUSH_HOTKEYS,
 		WINDOW_HEIGHT,
 		WINDOW_WIDTH,
 		WINDOW_MAXIMIZED,
@@ -276,6 +278,11 @@ namespace Config {
 
 		// Depot auto-assignment settings
 		AUTO_ASSIGN_DEPOT_TO_CLOSEST_TEMPLE,  // bool: auto-assign depot town ID to closest temple
+
+		// Share Marketplace
+		MARKETPLACE_ENABLED, // bool: poll presence / allow marketplace UI
+		MARKETPLACE_URL, // string: base URL e.g. http://127.0.0.1:8787
+		MARKETPLACE_NICKNAME, // string: display nick (session key lives in AppData file)
 
 		LAST,
 	};

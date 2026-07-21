@@ -243,6 +243,9 @@
     <ClCompile Include="..\..\source\otmapgen.cpp" />
     <ClCompile Include="..\..\source\otmapgen_dialog.cpp" />
     <ClCompile Include="..\..\source\recent_brushes_window.cpp" />
+    <ClCompile Include="..\..\source\proposed_brushes_window.cpp" />
+    <ClCompile Include="..\..\source\marketplace_client.cpp" />
+    <ClCompile Include="..\..\source\marketplace_window.cpp" />
     <ClCompile Include="..\..\source\replace_items_window.cpp" />
     <ClCompile Include="..\..\source\revscript_manager.cpp" />
     <ClCompile Include="..\..\source\string_utils.cpp" />
@@ -339,6 +342,9 @@
     <ClCompile Include="..\..\source\properties_window.cpp" />
     <ClCompile Include="..\..\source\raw_brush.cpp" />
     <ClInclude Include="..\..\source\recent_brushes_window.h" />
+    <ClInclude Include="..\..\source\proposed_brushes_window.h" />
+    <ClInclude Include="..\..\source\marketplace_client.h" />
+    <ClInclude Include="..\..\source\marketplace_window.h" />
     <ClInclude Include="..\..\source\replace_items_window.h" />
     <ClInclude Include="..\..\source\revscript_manager.h" />
     <ClInclude Include="..\..\source\rme_forward_declarations.h" />
@@ -461,6 +467,8 @@
     <ClCompile Include="..\..\source\iomap.cpp" />
     <ClInclude Include="..\..\source\iomap_otbm.h" />
     <ClCompile Include="..\..\source\iomap_otbm.cpp" />
+    <ClInclude Include="..\..\source\map_json_export.h" />
+    <ClCompile Include="..\..\source\map_json_export.cpp" />
     <ClInclude Include="..\..\source\json.h" />
     <ClInclude Include="..\..\source\json\json_spirit.h" />
     <ClInclude Include="..\..\source\json\json_spirit_error_position.h" />

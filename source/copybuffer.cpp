@@ -51,6 +51,12 @@ void CopyBuffer::clear() {
 	tiles = nullptr;
 }
 
+void CopyBuffer::assignTiles(BaseMap* map, const Position& topLeft) {
+	clear();
+	tiles = map;
+	copyPos = topLeft;
+}
+
 void CopyBuffer::copy(Editor& editor, int floor) {
 	if (editor.selection.size() == 0) {
 		g_gui.SetStatusText("No tiles to copy.");

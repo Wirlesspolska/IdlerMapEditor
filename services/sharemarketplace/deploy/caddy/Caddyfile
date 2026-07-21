@@ -1,0 +1,5 @@
+# Placeholder — overwritten by ./deploy.sh up
+# For local smoke tests without deploy.sh, use localhost HTTP only:
+:80 {
+	reverse_proxy marketplace:8787
+}

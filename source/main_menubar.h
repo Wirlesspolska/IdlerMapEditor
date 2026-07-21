@@ -34,9 +34,11 @@ namespace MenuBar {
 		GENERATE_DUNGEON_MAP,
 		CLOSE,
 		IMPORT_MAP,
+		IMPORT_MAP_JSON,
 		IMPORT_MONSTERS,
 		IMPORT_MINIMAP,
 		EXPORT_MINIMAP,
+		EXPORT_MAP_JSON,
 		EXPORT_TILESETS,
 		RELOAD_DATA,
 		RELOAD_REVSCRIPTS,
@@ -138,6 +140,8 @@ namespace MenuBar {
 
 		WIN_MINIMAP,
 		WIN_RECENT_BRUSHES,
+		WIN_PROPOSED_BRUSHES,
+		WIN_MARKETPLACE,
 		NEW_PALETTE,
 		TAKE_SCREENSHOT,
 		LIVE_START,
@@ -237,9 +241,11 @@ public:
 	// Import Menu
 	// Export Menu
 	void OnImportMap(wxCommandEvent& event);
+	void OnImportMapJson(wxCommandEvent& event);
 	void OnImportMonsterData(wxCommandEvent& event);
 	void OnImportMinimap(wxCommandEvent& event);
 	void OnExportMinimap(wxCommandEvent& event);
+	void OnExportMapJson(wxCommandEvent& event);
 	void OnExportTilesets(wxCommandEvent& event);
 	void OnReloadDataFiles(wxCommandEvent& event);
 	void OnReloadRevScripts(wxCommandEvent& event);
@@ -323,6 +329,8 @@ public:
 	// Window Menu
 	void OnMinimapWindow(wxCommandEvent& event);
 	void OnRecentBrushesWindow(wxCommandEvent& event);
+	void OnProposedBrushesWindow(wxCommandEvent& event);
+	void OnMarketplaceWindow(wxCommandEvent& event);
 	void OnNewPalette(wxCommandEvent& event);
 	void OnTakeScreenshot(wxCommandEvent& event);
 	void OnSelectTerrainPalette(wxCommandEvent& event);

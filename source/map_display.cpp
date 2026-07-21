@@ -30,6 +30,8 @@
 #include <set>
 
 #include "gui.h"
+#include "proposed_brushes_window.h"
+#include "common_windows.h"
 #include "editor.h"
 #include "brush.h"
 #include "sprites.h"
@@ -651,6 +653,15 @@ void MapCanvas::OnMouseLeftClick(wxMouseEvent& event) {
 	if (!g_gui.IsDrawingMode() && drawer->HandleContainerTooltipNavClick(glx, gly)) {
 		g_gui.RefreshView();
 		return;
+	}
+
+	// Export JSON From/To pick mode (modeless dialog)
+	{
+		int mouse_map_x, mouse_map_y;
+		ScreenToMap(event.GetX(), event.GetY(), &mouse_map_x, &mouse_map_y);
+		if (g_gui.TryConsumeMapPositionPick(Position(mouse_map_x, mouse_map_y, floor))) {
+			return;
+		}
 	}
 
 	OnMouseActionClick(event);
@@ -1924,6 +1935,15 @@ void MapCanvas::OnKeyDown(wxKeyEvent& event) {
 				}
 				g_gui.SetHotkey(index, hk);
 			} else {
+				// Proposed Brush 1-9 bindings (takes priority when enabled)
+				if (index >= 1 && index <= 9) {
+					if (ProposedBrushesWindow* proposed = g_gui.GetProposedBrushesWindow()) {
+						if (proposed->AreHotkeysEnabled() && proposed->SelectHotkey(index)) {
+							break;
+						}
+					}
+				}
+
 				// Click hotkey
 				Hotkey hk = g_gui.GetHotkey(index);
 				if (hk.IsPosition()) {
@@ -1990,6 +2010,17 @@ void MapCanvas::OnKeyUp(wxKeyEvent& event) {
 		UpdatePositionStatus();
 		Refresh();
 		return;
+	}
+
+	// ESC key - cancel Export JSON From/To pick mode
+	if (event.GetKeyCode() == WXK_ESCAPE) {
+		if (ExportMapJsonWindow* exportWin = g_gui.GetExportMapJsonWindow()) {
+			if (exportWin->IsPicking()) {
+				exportWin->CancelPickMode();
+				g_gui.SetStatusText("Position pick cancelled");
+				return;
+			}
+		}
 	}
 
 	// ESC key - cancel custom brush size

@@ -40,6 +40,7 @@ ${CMAKE_CURRENT_LIST_DIR}/house_exit_brush.h
 ${CMAKE_CURRENT_LIST_DIR}/iomap.h
 ${CMAKE_CURRENT_LIST_DIR}/iomap_otbm.h
 #${CMAKE_CURRENT_LIST_DIR}/iomap_otmm.h
+${CMAKE_CURRENT_LIST_DIR}/map_json_export.h
 ${CMAKE_CURRENT_LIST_DIR}/item.h
 ${CMAKE_CURRENT_LIST_DIR}/item_attributes.h
 ${CMAKE_CURRENT_LIST_DIR}/items.h
@@ -69,6 +70,9 @@ ${CMAKE_CURRENT_LIST_DIR}/minimap_window.h
 ${CMAKE_CURRENT_LIST_DIR}/mt_rand.h
 ${CMAKE_CURRENT_LIST_DIR}/net_connection.h
 ${CMAKE_CURRENT_LIST_DIR}/notes_window.h
+${CMAKE_CURRENT_LIST_DIR}/proposed_brushes_window.h
+${CMAKE_CURRENT_LIST_DIR}/marketplace_client.h
+${CMAKE_CURRENT_LIST_DIR}/marketplace_window.h
 ${CMAKE_CURRENT_LIST_DIR}/numbertextctrl.h
 ${CMAKE_CURRENT_LIST_DIR}/old_properties_window.h
 ${CMAKE_CURRENT_LIST_DIR}/otml.h
@@ -151,6 +155,7 @@ ${CMAKE_CURRENT_LIST_DIR}/house_exit_brush.cpp
 ${CMAKE_CURRENT_LIST_DIR}/iomap.cpp
 ${CMAKE_CURRENT_LIST_DIR}/iomap_otbm.cpp
 #${CMAKE_CURRENT_LIST_DIR}/iomap_otmm.cpp
+${CMAKE_CURRENT_LIST_DIR}/map_json_export.cpp
 ${CMAKE_CURRENT_LIST_DIR}/item_attributes.cpp
 ${CMAKE_CURRENT_LIST_DIR}/item.cpp
 ${CMAKE_CURRENT_LIST_DIR}/items.cpp
@@ -177,6 +182,9 @@ ${CMAKE_CURRENT_LIST_DIR}/mkpch.cpp
 ${CMAKE_CURRENT_LIST_DIR}/mt_rand.cpp
 ${CMAKE_CURRENT_LIST_DIR}/net_connection.cpp
 ${CMAKE_CURRENT_LIST_DIR}/notes_window.cpp
+${CMAKE_CURRENT_LIST_DIR}/proposed_brushes_window.cpp
+${CMAKE_CURRENT_LIST_DIR}/marketplace_client.cpp
+${CMAKE_CURRENT_LIST_DIR}/marketplace_window.cpp
 ${CMAKE_CURRENT_LIST_DIR}/numbertextctrl.cpp
 ${CMAKE_CURRENT_LIST_DIR}/old_properties_window.cpp
 ${CMAKE_CURRENT_LIST_DIR}/palette_brushlist.cpp

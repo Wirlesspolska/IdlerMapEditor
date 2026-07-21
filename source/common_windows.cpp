@@ -34,6 +34,8 @@
 #include "positionctrl.h"
 #include "string_utils.h"
 #include "house.h"
+#include "map_json_export.h"
+#include "map_tab.h"
 
 #include <wx/listctrl.h>
 
@@ -647,6 +649,478 @@ void ExportMiniMapWindow::CheckValues() {
 
 	if (!directory.IsDirWritable()) {
 		error_field->SetLabel("Output folder is not writable.");
+		ok_button->Enable(false);
+		return;
+	}
+
+	error_field->SetLabel(wxEmptyString);
+	ok_button->Enable(true);
+}
+
+// ============================================================================
+// Import Map JSON window
+
+BEGIN_EVENT_TABLE(ImportMapJsonWindow, wxDialog)
+EVT_BUTTON(MAP_JSON_IMPORT_FILE_BUTTON, ImportMapJsonWindow::OnClickBrowse)
+EVT_BUTTON(wxID_OK, ImportMapJsonWindow::OnClickOK)
+EVT_BUTTON(wxID_CANCEL, ImportMapJsonWindow::OnClickCancel)
+END_EVENT_TABLE()
+
+ImportMapJsonWindow::ImportMapJsonWindow(wxWindow* parent, Editor& editor) :
+	wxDialog(parent, wxID_ANY, "Import Map from JSON", wxDefaultPosition, wxSize(420, 340)),
+	editor(editor) {
+	wxBoxSizer* sizer = newd wxBoxSizer(wxVERTICAL);
+	wxStaticBoxSizer* tmpsizer;
+
+	tmpsizer = newd wxStaticBoxSizer(newd wxStaticBox(this, wxID_ANY, "JSON Patch File"), wxHORIZONTAL);
+	file_text_field = newd wxTextCtrl(tmpsizer->GetStaticBox(), wxID_ANY, "", wxDefaultPosition, wxSize(280, 23));
+	tmpsizer->Add(file_text_field, 1, wxALL, 5);
+	tmpsizer->Add(newd wxButton(tmpsizer->GetStaticBox(), MAP_JSON_IMPORT_FILE_BUTTON, "Browse...", wxDefaultPosition, wxSize(80, 23)), 0, wxALL, 5);
+	sizer->Add(tmpsizer, 0, wxEXPAND | wxALL, 5);
+
+	tmpsizer = newd wxStaticBoxSizer(newd wxStaticBox(this, wxID_ANY, "Placement Offset"), wxHORIZONTAL);
+	tmpsizer->Add(newd wxStaticText(tmpsizer->GetStaticBox(), wxID_ANY, "X"), 0, wxALL | wxALIGN_CENTER_VERTICAL, 5);
+	x_offset_ctrl = newd wxSpinCtrl(tmpsizer->GetStaticBox(), wxID_ANY, "0", wxDefaultPosition, wxSize(70, 23), wxSP_ARROW_KEYS, -MAP_MAX_WIDTH, MAP_MAX_WIDTH, 0);
+	tmpsizer->Add(x_offset_ctrl, 0, wxALL, 5);
+	tmpsizer->Add(newd wxStaticText(tmpsizer->GetStaticBox(), wxID_ANY, "Y"), 0, wxALL | wxALIGN_CENTER_VERTICAL, 5);
+	y_offset_ctrl = newd wxSpinCtrl(tmpsizer->GetStaticBox(), wxID_ANY, "0", wxDefaultPosition, wxSize(70, 23), wxSP_ARROW_KEYS, -MAP_MAX_HEIGHT, MAP_MAX_HEIGHT, 0);
+	tmpsizer->Add(y_offset_ctrl, 0, wxALL, 5);
+	tmpsizer->Add(newd wxStaticText(tmpsizer->GetStaticBox(), wxID_ANY, "Z"), 0, wxALL | wxALIGN_CENTER_VERTICAL, 5);
+	z_offset_ctrl = newd wxSpinCtrl(tmpsizer->GetStaticBox(), wxID_ANY, "0", wxDefaultPosition, wxSize(50, 23), wxSP_ARROW_KEYS, -MAP_MAX_LAYER, MAP_MAX_LAYER, 0);
+	tmpsizer->Add(z_offset_ctrl, 0, wxALL, 5);
+	sizer->Add(tmpsizer, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 5);
+
+	if (MapTab* map_tab = g_gui.GetCurrentMapTab()) {
+		Position center = map_tab->GetScreenCenterPosition();
+		x_offset_ctrl->SetValue(center.x);
+		y_offset_ctrl->SetValue(center.y);
+		z_offset_ctrl->SetValue(center.z);
+	}
+
+	tmpsizer = newd wxStaticBoxSizer(newd wxStaticBox(this, wxID_ANY, "Options"), wxVERTICAL);
+	merge_checkbox = newd wxCheckBox(tmpsizer->GetStaticBox(), wxID_ANY, "Merge into existing tiles");
+	import_spawns_checkbox = newd wxCheckBox(tmpsizer->GetStaticBox(), wxID_ANY, "Import spawns and creatures");
+	import_houses_checkbox = newd wxCheckBox(tmpsizer->GetStaticBox(), wxID_ANY, "Import house IDs on tiles");
+	merge_checkbox->SetValue(true);
+	import_spawns_checkbox->SetValue(true);
+	import_houses_checkbox->SetValue(true);
+	tmpsizer->Add(merge_checkbox, 0, wxALL, 3);
+	tmpsizer->Add(import_spawns_checkbox, 0, wxALL, 3);
+	tmpsizer->Add(import_houses_checkbox, 0, wxALL, 3);
+	tmpsizer->Add(newd wxStaticText(tmpsizer->GetStaticBox(), wxID_ANY, "Relative patches: offset is where 0,0,0 is placed.\nAbsolute patches: offset is added to stored coords."), 0, wxALL, 3);
+	sizer->Add(tmpsizer, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 5);
+
+	wxBoxSizer* buttons = newd wxBoxSizer(wxHORIZONTAL);
+	buttons->Add(newd wxButton(this, wxID_OK, "OK"), 0, wxALL, 5);
+	buttons->Add(newd wxButton(this, wxID_CANCEL, "Cancel"), 0, wxALL, 5);
+	sizer->Add(buttons, 0, wxALIGN_CENTER | wxALL, 5);
+
+	SetSizer(sizer);
+	Layout();
+	Centre(wxBOTH);
+}
+
+ImportMapJsonWindow::~ImportMapJsonWindow() = default;
+
+void ImportMapJsonWindow::OnClickBrowse(wxCommandEvent& WXUNUSED(event)) {
+	wxFileDialog dialog(this, "Import JSON patch...", "", "", "JSON map patch (*.json)|*.json|All files (*.*)|*.*", wxFD_OPEN | wxFD_FILE_MUST_EXIST);
+	if (dialog.ShowModal() == wxID_OK) {
+		file_text_field->ChangeValue(dialog.GetPath());
+	}
+}
+
+void ImportMapJsonWindow::OnClickOK(wxCommandEvent& WXUNUSED(event)) {
+	wxFileName fn = file_text_field->GetValue();
+	if (!fn.FileExists()) {
+		g_gui.PopupDialog(this, "Error", "The specified JSON file doesn't exist.", wxOK);
+		return;
+	}
+
+	MapJsonImportOptions options;
+	options.offsetX = x_offset_ctrl->GetValue();
+	options.offsetY = y_offset_ctrl->GetValue();
+	options.offsetZ = z_offset_ctrl->GetValue();
+	options.merge = merge_checkbox->GetValue();
+	options.importSpawns = import_spawns_checkbox->GetValue();
+	options.importHouses = import_houses_checkbox->GetValue();
+
+	wxString error;
+	const bool ok = MapJsonImporter::importFile(editor, fn, options, error);
+	if (!ok) {
+		g_gui.PopupDialog(this, "Import Failed", error.empty() ? "Could not import JSON patch." : error, wxOK);
+		return;
+	}
+
+	EndModal(1);
+}
+
+void ImportMapJsonWindow::OnClickCancel(wxCommandEvent& WXUNUSED(event)) {
+	EndModal(0);
+}
+
+// ============================================================================
+// Export Map JSON window
+
+BEGIN_EVENT_TABLE(ExportMapJsonWindow, wxDialog)
+EVT_BUTTON(MAP_JSON_EXPORT_FILE_BUTTON, ExportMapJsonWindow::OnClickBrowse)
+EVT_BUTTON(MAP_JSON_EXPORT_PICK_FROM_BUTTON, ExportMapJsonWindow::OnPickFrom)
+EVT_BUTTON(MAP_JSON_EXPORT_PICK_TO_BUTTON, ExportMapJsonWindow::OnPickTo)
+EVT_BUTTON(MAP_JSON_EXPORT_USE_SELECTION_BUTTON, ExportMapJsonWindow::OnUseSelection)
+EVT_BUTTON(wxID_OK, ExportMapJsonWindow::OnClickOK)
+EVT_BUTTON(wxID_CANCEL, ExportMapJsonWindow::OnClickCancel)
+EVT_CHOICE(wxID_ANY, ExportMapJsonWindow::OnModeChange)
+EVT_CLOSE(ExportMapJsonWindow::OnClose)
+END_EVENT_TABLE()
+
+ExportMapJsonWindow::ExportMapJsonWindow(wxWindow* parent, Editor& editor) :
+	wxDialog(parent, wxID_ANY, "Export Map to JSON", wxDefaultPosition, wxSize(480, 580), wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER | wxSTAY_ON_TOP),
+	editor(editor),
+	pick_target(PICK_NONE) {
+	wxSizer* sizer = newd wxBoxSizer(wxVERTICAL);
+	wxSizer* tmpsizer;
+
+	error_field = newd wxStaticText(this, wxID_VIEW_DETAILS, "", wxDefaultPosition, wxDefaultSize);
+	error_field->SetForegroundColour(*wxRED);
+	tmpsizer = newd wxBoxSizer(wxHORIZONTAL);
+	tmpsizer->Add(error_field, 0, wxALL, 5);
+	sizer->Add(tmpsizer, 0, wxLEFT | wxRIGHT | wxBOTTOM | wxEXPAND, 5);
+
+	directory_text_field = newd wxTextCtrl(this, wxID_ANY, "", wxDefaultPosition, wxDefaultSize);
+	directory_text_field->Bind(wxEVT_KEY_UP, &ExportMapJsonWindow::OnDirectoryChanged, this);
+	directory_text_field->SetValue(wxString(g_settings.getString(Config::MAP_JSON_EXPORT_DIR)));
+	tmpsizer = newd wxStaticBoxSizer(wxHORIZONTAL, this, "Output Folder");
+	tmpsizer->Add(directory_text_field, 1, wxALL, 5);
+	tmpsizer->Add(newd wxButton(this, MAP_JSON_EXPORT_FILE_BUTTON, "Browse"), 0, wxALL, 5);
+	sizer->Add(tmpsizer, 0, wxALL | wxEXPAND, 5);
+
+	wxString mapName(editor.map.getName().c_str(), wxConvUTF8);
+	file_name_text_field = newd wxTextCtrl(this, wxID_ANY, mapName.BeforeLast('.'), wxDefaultPosition, wxDefaultSize);
+	file_name_text_field->Bind(wxEVT_KEY_UP, &ExportMapJsonWindow::OnFileNameChanged, this);
+	tmpsizer = newd wxStaticBoxSizer(wxHORIZONTAL, this, "File Name");
+	tmpsizer->Add(file_name_text_field, 1, wxALL, 5);
+	sizer->Add(tmpsizer, 0, wxLEFT | wxRIGHT | wxBOTTOM | wxEXPAND, 5);
+
+	wxArrayString modes;
+	modes.Add("Selection");
+	modes.Add("From / To Positions");
+	modes.Add("Whole Map (batched)");
+	tmpsizer = newd wxStaticBoxSizer(wxHORIZONTAL, this, "Export Mode");
+	mode_choice = newd wxChoice(this, wxID_ANY, wxDefaultPosition, wxDefaultSize, modes);
+	mode_choice->SetSelection(editor.hasSelection() ? 0 : 1);
+	tmpsizer->Add(mode_choice, 1, wxALL, 5);
+	sizer->Add(tmpsizer, 0, wxLEFT | wxRIGHT | wxBOTTOM | wxEXPAND, 5);
+
+	Position fromPos(0, 0, GROUND_LAYER);
+	Position toPos(0, 0, GROUND_LAYER);
+	if (editor.hasSelection()) {
+		fromPos = editor.selection.minPosition();
+		toPos = editor.selection.maxPosition();
+	} else if (MapTab* map_tab = g_gui.GetCurrentMapTab()) {
+		fromPos = map_tab->GetScreenCenterPosition();
+		toPos = fromPos;
+	}
+
+	from_ctrl = newd PositionCtrl(this, "From", fromPos.x, fromPos.y, fromPos.z, editor.map.getWidth(), editor.map.getHeight());
+	to_ctrl = newd PositionCtrl(this, "To", toPos.x, toPos.y, toPos.z, editor.map.getWidth(), editor.map.getHeight());
+	sizer->Add(from_ctrl, 0, wxLEFT | wxRIGHT | wxBOTTOM | wxEXPAND, 5);
+	sizer->Add(to_ctrl, 0, wxLEFT | wxRIGHT | wxBOTTOM | wxEXPAND, 5);
+
+	tmpsizer = newd wxBoxSizer(wxHORIZONTAL);
+	pick_from_button = newd wxButton(this, MAP_JSON_EXPORT_PICK_FROM_BUTTON, "Pick From");
+	pick_to_button = newd wxButton(this, MAP_JSON_EXPORT_PICK_TO_BUTTON, "Pick To");
+	use_selection_button = newd wxButton(this, MAP_JSON_EXPORT_USE_SELECTION_BUTTON, "Use Selection");
+	pick_from_button->SetToolTip("Click a tile on the map to set the From position.");
+	pick_to_button->SetToolTip("Click a tile on the map to set the To position.");
+	use_selection_button->SetToolTip("Fill From/To from the current map selection bounds.");
+	tmpsizer->Add(pick_from_button, 1, wxALL, 2);
+	tmpsizer->Add(pick_to_button, 1, wxALL, 2);
+	tmpsizer->Add(use_selection_button, 1, wxALL, 2);
+	sizer->Add(tmpsizer, 0, wxLEFT | wxRIGHT | wxEXPAND, 5);
+
+	pick_hint_label = newd wxStaticText(this, wxID_ANY, "Tip: dialog stays open — use Pick From/To, then click the map.");
+	pick_hint_label->SetForegroundColour(wxColour(0, 90, 160));
+	sizer->Add(pick_hint_label, 0, wxLEFT | wxRIGHT | wxBOTTOM | wxEXPAND, 8);
+
+	tmpsizer = newd wxStaticBoxSizer(wxVERTICAL, this, "Options");
+	include_empty_checkbox = newd wxCheckBox(this, wxID_ANY, "Include empty tiles");
+	include_spawns_checkbox = newd wxCheckBox(this, wxID_ANY, "Include spawns and creatures");
+	include_houses_checkbox = newd wxCheckBox(this, wxID_ANY, "Include house metadata");
+	relative_coords_checkbox = newd wxCheckBox(this, wxID_ANY, "Relative coordinates (best for worldgen blocks)");
+	simplify_ground_checkbox = newd wxCheckBox(this, wxID_ANY, "Simplify uniform ground (from/to fills)");
+	include_spawns_checkbox->SetValue(true);
+	include_houses_checkbox->SetValue(true);
+	relative_coords_checkbox->SetValue(true);
+	simplify_ground_checkbox->SetValue(true);
+	simplify_ground_checkbox->SetToolTip("If most tiles are plain same-ground, emit fills[{from,to,z,ground}] instead of listing each tile.");
+	tmpsizer->Add(include_empty_checkbox, 0, wxALL, 3);
+	tmpsizer->Add(include_spawns_checkbox, 0, wxALL, 3);
+	tmpsizer->Add(include_houses_checkbox, 0, wxALL, 3);
+	tmpsizer->Add(relative_coords_checkbox, 0, wxALL, 3);
+	tmpsizer->Add(simplify_ground_checkbox, 0, wxALL, 3);
+
+	wxSizer* chunkSizer = newd wxBoxSizer(wxHORIZONTAL);
+	chunkSizer->Add(newd wxStaticText(this, wxID_ANY, "Batch chunk size:"), 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 5);
+	chunk_size_spin = newd wxSpinCtrl(this, wxID_ANY, "128", wxDefaultPosition, wxDefaultSize, wxSP_ARROW_KEYS, 16, 1024, 128);
+	chunkSizer->Add(chunk_size_spin, 0, wxALL, 0);
+	tmpsizer->Add(chunkSizer, 0, wxALL, 3);
+	sizer->Add(tmpsizer, 0, wxLEFT | wxRIGHT | wxBOTTOM | wxEXPAND, 5);
+
+	tmpsizer = newd wxBoxSizer(wxHORIZONTAL);
+	tmpsizer->Add(ok_button = newd wxButton(this, wxID_OK, "OK"), wxSizerFlags(1).Center());
+	tmpsizer->Add(newd wxButton(this, wxID_CANCEL, "Cancel"), wxSizerFlags(1).Center());
+	sizer->Add(tmpsizer, 0, wxCENTER, 10);
+
+	SetSizer(sizer);
+	Layout();
+	Centre(wxBOTH);
+	UpdateModeControls();
+	CheckValues();
+}
+
+ExportMapJsonWindow::~ExportMapJsonWindow() {
+	CancelPickMode();
+	g_gui.ClearExportMapJsonWindow();
+}
+
+void ExportMapJsonWindow::OnModeChange(wxCommandEvent& WXUNUSED(event)) {
+	CancelPickMode();
+	UpdateModeControls();
+	CheckValues();
+}
+
+void ExportMapJsonWindow::UpdateModeControls() {
+	const int mode = mode_choice->GetSelection();
+	const bool fromTo = (mode == 1);
+	const bool wholeMap = (mode == 2);
+
+	from_ctrl->Enable(fromTo);
+	to_ctrl->Enable(fromTo);
+	pick_from_button->Enable(fromTo);
+	pick_to_button->Enable(fromTo);
+	use_selection_button->Enable(fromTo || mode == 0);
+	chunk_size_spin->Enable(wholeMap);
+
+	if (mode == 0 && editor.hasSelection()) {
+		from_ctrl->SetPosition(editor.selection.minPosition());
+		to_ctrl->SetPosition(editor.selection.maxPosition());
+	}
+
+	if (!fromTo) {
+		CancelPickMode();
+	}
+	UpdatePickButtonLabels();
+}
+
+void ExportMapJsonWindow::UpdatePickButtonLabels() {
+	pick_from_button->SetLabel(pick_target == PICK_FROM ? "Click map..." : "Pick From");
+	pick_to_button->SetLabel(pick_target == PICK_TO ? "Click map..." : "Pick To");
+	if (pick_target == PICK_FROM) {
+		pick_hint_label->SetLabel("Click a map tile to set From. Esc / button again cancels.");
+		pick_hint_label->SetForegroundColour(wxColour(180, 90, 0));
+	} else if (pick_target == PICK_TO) {
+		pick_hint_label->SetLabel("Click a map tile to set To. Esc / button again cancels.");
+		pick_hint_label->SetForegroundColour(wxColour(180, 90, 0));
+	} else {
+		pick_hint_label->SetLabel("Tip: dialog stays open — use Pick From/To, then click the map.");
+		pick_hint_label->SetForegroundColour(wxColour(0, 90, 160));
+	}
+}
+
+void ExportMapJsonWindow::StartPick(int target) {
+	if (mode_choice->GetSelection() != 1) {
+		mode_choice->SetSelection(1);
+		UpdateModeControls();
+	}
+
+	if (pick_target == target) {
+		CancelPickMode();
+		return;
+	}
+
+	pick_target = target;
+	UpdatePickButtonLabels();
+	g_gui.SetStatusText(pick_target == PICK_FROM ? "Pick From: click a tile on the map..." : "Pick To: click a tile on the map...");
+	Raise();
+}
+
+void ExportMapJsonWindow::CancelPickMode() {
+	if (pick_target == PICK_NONE) {
+		return;
+	}
+	pick_target = PICK_NONE;
+	UpdatePickButtonLabels();
+}
+
+void ExportMapJsonWindow::SetPickedPosition(const Position& pos) {
+	if (pick_target == PICK_FROM) {
+		from_ctrl->SetPosition(pos);
+		g_gui.SetStatusText(wxString::Format("From set to %d,%d,%d", pos.x, pos.y, pos.z));
+	} else if (pick_target == PICK_TO) {
+		to_ctrl->SetPosition(pos);
+		g_gui.SetStatusText(wxString::Format("To set to %d,%d,%d", pos.x, pos.y, pos.z));
+	} else {
+		return;
+	}
+
+	pick_target = PICK_NONE;
+	UpdatePickButtonLabels();
+	CheckValues();
+	Raise();
+}
+
+void ExportMapJsonWindow::OnPickFrom(wxCommandEvent& WXUNUSED(event)) {
+	StartPick(PICK_FROM);
+}
+
+void ExportMapJsonWindow::OnPickTo(wxCommandEvent& WXUNUSED(event)) {
+	StartPick(PICK_TO);
+}
+
+void ExportMapJsonWindow::OnUseSelection(wxCommandEvent& WXUNUSED(event)) {
+	if (!editor.hasSelection()) {
+		g_gui.PopupDialog(this, "No Selection", "Select tiles on the map first.", wxOK);
+		return;
+	}
+	CancelPickMode();
+	if (mode_choice->GetSelection() != 1) {
+		mode_choice->SetSelection(1);
+		UpdateModeControls();
+	}
+	from_ctrl->SetPosition(editor.selection.minPosition());
+	to_ctrl->SetPosition(editor.selection.maxPosition());
+	CheckValues();
+}
+
+void ExportMapJsonWindow::OnClickBrowse(wxCommandEvent& WXUNUSED(event)) {
+	wxDirDialog dialog(NULL, "Select the output folder", "", wxDD_DEFAULT_STYLE | wxDD_DIR_MUST_EXIST);
+	if (dialog.ShowModal() == wxID_OK) {
+		directory_text_field->ChangeValue(dialog.GetPath());
+	}
+	CheckValues();
+}
+
+void ExportMapJsonWindow::OnDirectoryChanged(wxKeyEvent& event) {
+	CheckValues();
+	event.Skip();
+}
+
+void ExportMapJsonWindow::OnFileNameChanged(wxKeyEvent& event) {
+	CheckValues();
+	event.Skip();
+}
+
+void ExportMapJsonWindow::OnClickOK(wxCommandEvent& WXUNUSED(event)) {
+	const int mode = mode_choice->GetSelection();
+	FileName directory(directory_text_field->GetValue());
+	g_settings.setString(Config::MAP_JSON_EXPORT_DIR, directory_text_field->GetValue().ToStdString());
+
+	MapJsonExportOptions options;
+	options.includeEmptyTiles = include_empty_checkbox->GetValue();
+	options.includeSpawns = include_spawns_checkbox->GetValue();
+	options.includeHouses = include_houses_checkbox->GetValue();
+	options.relativeCoords = relative_coords_checkbox->GetValue();
+	options.simplifyUniformGround = simplify_ground_checkbox->GetValue();
+	options.chunkSize = chunk_size_spin->GetValue();
+
+	bool ok = false;
+
+	if (mode == 2) {
+		int ret = g_gui.PopupDialog(
+			"Export Whole Map",
+			"Exporting an entire map to JSON can create a large number of chunk files and take a long time.\n\nContinue with batched export?",
+			wxYES | wxNO
+		);
+		if (ret != wxID_YES) {
+			return;
+		}
+
+		ok = MapJsonExporter::exportMapBatched(editor.map, directory, file_name_text_field->GetValue(), options);
+	} else {
+		Position from;
+		Position to;
+
+		if (mode == 0) {
+			if (!editor.hasSelection()) {
+				g_gui.PopupDialog("Error", "No selection to export.", wxOK);
+				return;
+			}
+			from = editor.selection.minPosition();
+			to = editor.selection.maxPosition();
+		} else {
+			from = from_ctrl->GetPosition();
+			to = to_ctrl->GetPosition();
+		}
+
+		MapJsonExporter::normalizeBounds(from, to);
+		const uint64_t tileCount = MapJsonExporter::estimateTileCount(from, to);
+		if (tileCount > 128ull * 128ull * 4ull) {
+			int ret = g_gui.PopupDialog(
+				"Large Region",
+				wxString::Format(
+					"This region covers %llu tile slots. For worldgen blocks, smaller patches (shops, buildings, event areas) are recommended.\n\nContinue anyway?",
+					static_cast<unsigned long long>(tileCount)
+				),
+				wxYES | wxNO
+			);
+			if (ret != wxID_YES) {
+				return;
+			}
+		}
+
+		FileName file(file_name_text_field->GetValue() + ".json");
+		file.Normalize(wxPATH_NORM_ALL, directory.GetFullPath());
+		ok = MapJsonExporter::exportRegion(editor.map, from, to, file, options, true);
+	}
+
+	if (!ok) {
+		g_gui.PopupDialog(this, "Error", "Failed to export map JSON.", wxOK);
+		return;
+	}
+
+	CloseWindow();
+}
+
+void ExportMapJsonWindow::OnClickCancel(wxCommandEvent& WXUNUSED(event)) {
+	CloseWindow();
+}
+
+void ExportMapJsonWindow::OnClose(wxCloseEvent& WXUNUSED(event)) {
+	CloseWindow();
+}
+
+void ExportMapJsonWindow::CloseWindow() {
+	CancelPickMode();
+	Destroy();
+}
+
+void ExportMapJsonWindow::CheckValues() {
+	if (directory_text_field->IsEmpty()) {
+		error_field->SetLabel("Type or select an output folder.");
+		ok_button->Enable(false);
+		return;
+	}
+
+	if (file_name_text_field->IsEmpty()) {
+		error_field->SetLabel("Type a name for the file.");
+		ok_button->Enable(false);
+		return;
+	}
+
+	FileName directory(directory_text_field->GetValue());
+	if (!directory.Exists()) {
+		error_field->SetLabel("Output folder does not exist.");
+		ok_button->Enable(false);
+		return;
+	}
+
+	if (!directory.IsDirWritable()) {
+		error_field->SetLabel("Output folder is not writable.");
+		ok_button->Enable(false);
+		return;
+	}
+
+	if (mode_choice->GetSelection() == 0 && !editor.hasSelection()) {
+		error_field->SetLabel("Select tiles on the map first, or switch mode.");
 		ok_button->Enable(false);
 		return;
 	}
@@ -1388,7 +1862,7 @@ EditTownsDialog::EditTownsDialog(wxWindow* parent, Editor& editor) :
 {
 	Map& map = editor.map;
 
-	// Repair maps missing the required default town (ID 0 / City)
+	// Seed City (ID 0) only when the map has no towns at all
 	map.ensureDefaultTown();
 
 	// Create topsizer

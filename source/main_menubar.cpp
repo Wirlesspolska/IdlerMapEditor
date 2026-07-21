@@ -126,9 +126,11 @@ MainMenuBar::MainMenuBar(MainFrame* frame) :
 	MAKE_ACTION(CLOSE, wxITEM_NORMAL, OnClose);
 
 	MAKE_ACTION(IMPORT_MAP, wxITEM_NORMAL, OnImportMap);
+	MAKE_ACTION(IMPORT_MAP_JSON, wxITEM_NORMAL, OnImportMapJson);
 	MAKE_ACTION(IMPORT_MONSTERS, wxITEM_NORMAL, OnImportMonsterData);
 	MAKE_ACTION(IMPORT_MINIMAP, wxITEM_NORMAL, OnImportMinimap);
 	MAKE_ACTION(EXPORT_MINIMAP, wxITEM_NORMAL, OnExportMinimap);
+	MAKE_ACTION(EXPORT_MAP_JSON, wxITEM_NORMAL, OnExportMapJson);
 	MAKE_ACTION(EXPORT_TILESETS, wxITEM_NORMAL, OnExportTilesets);
 
 	MAKE_ACTION(RELOAD_DATA, wxITEM_NORMAL, OnReloadDataFiles);
@@ -245,6 +247,8 @@ MainMenuBar::MainMenuBar(MainFrame* frame) :
 
 	MAKE_ACTION(WIN_MINIMAP, wxITEM_NORMAL, OnMinimapWindow);
 	MAKE_ACTION(WIN_RECENT_BRUSHES, wxITEM_NORMAL, OnRecentBrushesWindow);
+	MAKE_ACTION(WIN_PROPOSED_BRUSHES, wxITEM_NORMAL, OnProposedBrushesWindow);
+	MAKE_ACTION(WIN_MARKETPLACE, wxITEM_NORMAL, OnMarketplaceWindow);
 	MAKE_ACTION(NEW_PALETTE, wxITEM_NORMAL, OnNewPalette);
 	MAKE_ACTION(TAKE_SCREENSHOT, wxITEM_NORMAL, OnTakeScreenshot);
 
@@ -430,9 +434,11 @@ void MainMenuBar::Update() {
 	EnableItem(GENERATE_MAP, false);
 
 	EnableItem(IMPORT_MAP, is_local);
+	EnableItem(IMPORT_MAP_JSON, is_local);
 	EnableItem(IMPORT_MONSTERS, is_local);
 	EnableItem(IMPORT_MINIMAP, false);
 	EnableItem(EXPORT_MINIMAP, is_local);
+	EnableItem(EXPORT_MAP_JSON, is_local);
 	EnableItem(EXPORT_TILESETS, loaded);
 
 	EnableItem(RELOAD_REVSCRIPTS, is_local);
@@ -891,6 +897,15 @@ void MainMenuBar::OnImportMap(wxCommandEvent& WXUNUSED(event)) {
 	importmap->ShowModal();
 }
 
+void MainMenuBar::OnImportMapJson(wxCommandEvent& WXUNUSED(event)) {
+	if (!g_gui.GetCurrentEditor()) {
+		return;
+	}
+	ImportMapJsonWindow dlg(frame, *g_gui.GetCurrentEditor());
+	dlg.ShowModal();
+	dlg.Destroy();
+}
+
 void MainMenuBar::OnImportMonsterData(wxCommandEvent& WXUNUSED(event)) {
 	wxFileDialog dlg(g_gui.root, "Import monster/npc file", "", "", "*.xml", wxFD_OPEN | wxFD_MULTIPLE | wxFD_FILE_MUST_EXIST);
 	if (dlg.ShowModal() == wxID_OK) {
@@ -921,6 +936,10 @@ void MainMenuBar::OnExportMinimap(wxCommandEvent& WXUNUSED(event)) {
 		dlg.ShowModal();
 		dlg.Destroy();
 	}
+}
+
+void MainMenuBar::OnExportMapJson(wxCommandEvent& WXUNUSED(event)) {
+	g_gui.ShowExportMapJsonWindow();
 }
 
 void MainMenuBar::OnExportTilesets(wxCommandEvent& WXUNUSED(event)) {
@@ -2820,6 +2839,14 @@ void MainMenuBar::OnMinimapWindow(wxCommandEvent& event) {
 
 void MainMenuBar::OnRecentBrushesWindow(wxCommandEvent& event) {
 	g_gui.ShowRecentBrushesWindow();
+}
+
+void MainMenuBar::OnProposedBrushesWindow(wxCommandEvent& WXUNUSED(event)) {
+	g_gui.ShowProposedBrushesWindow();
+}
+
+void MainMenuBar::OnMarketplaceWindow(wxCommandEvent& WXUNUSED(event)) {
+	g_gui.ShowMarketplaceWindow();
 }
 
 void MainMenuBar::OnNewPalette(wxCommandEvent& event) {

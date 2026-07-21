@@ -27,6 +27,7 @@
 #include <wx/mstream.h>
 #include "hotkey_manager.h"
 #include "live_client.h"
+#include "common_windows.h"
 
 const wxString MainToolBar::STANDARD_BAR_NAME = "standard_toolbar";
 const wxString MainToolBar::BRUSHES_BAR_NAME = "brushes_toolbar";
@@ -52,7 +53,8 @@ inline wxBitmap* _wxGetBitmapFromMemory(const unsigned char* data, int length) {
 MainToolBar::MainToolBar(wxWindow* parent, wxAuiManager* manager) :
 	brush_size_toolbar(nullptr),
 	brush_width_control(nullptr),
-	brush_height_control(nullptr) {
+	brush_height_control(nullptr),
+	export_json_button(nullptr) {
 	wxSize icon_size = FROM_DIP(parent, wxSize(16, 16));
 	wxBitmap new_bitmap = wxArtProvider::GetBitmap(wxART_NEW, wxART_TOOLBAR, icon_size);
 	wxBitmap open_bitmap = wxArtProvider::GetBitmap(wxART_FILE_OPEN, wxART_TOOLBAR, icon_size);
@@ -77,6 +79,10 @@ MainToolBar::MainToolBar(wxWindow* parent, wxAuiManager* manager) :
 	standard_toolbar->AddTool(wxID_CUT, wxEmptyString, cut_bitmap, wxNullBitmap, wxITEM_NORMAL, "Cut", wxEmptyString, NULL);
 	standard_toolbar->AddTool(wxID_COPY, wxEmptyString, copy_bitmap, wxNullBitmap, wxITEM_NORMAL, "Copy", wxEmptyString, NULL);
 	standard_toolbar->AddTool(wxID_PASTE, wxEmptyString, paste_bitmap, wxNullBitmap, wxITEM_NORMAL, "Paste", wxEmptyString, NULL);
+	standard_toolbar->AddSeparator();
+	export_json_button = newd wxButton(standard_toolbar, TOOLBAR_EXPORT_MAP_JSON, "JSON", wxDefaultPosition, parent->FromDIP(wxSize(44, 20)));
+	export_json_button->SetToolTip("Export Map to JSON...");
+	standard_toolbar->AddControl(export_json_button);
 	standard_toolbar->AddSeparator();
 	CreateTooltipQuickControls();
 	standard_toolbar->Realize();
@@ -174,6 +180,7 @@ MainToolBar::MainToolBar(wxWindow* parent, wxAuiManager* manager) :
 	manager->AddPane(position_toolbar, wxAuiPaneInfo().Name(POSITION_BAR_NAME).ToolbarPane().Top().Row(1).Position(5).Floatable(false));
 
 	standard_toolbar->Bind(wxEVT_COMMAND_MENU_SELECTED, &MainToolBar::OnStandardButtonClick, this);
+	export_json_button->Bind(wxEVT_BUTTON, &MainToolBar::OnExportMapJsonButtonClick, this);
 	brushes_toolbar->Bind(wxEVT_COMMAND_MENU_SELECTED, &MainToolBar::OnBrushesButtonClick, this);
 	x_control->Bind(wxEVT_TEXT_PASTE, &MainToolBar::OnPastePositionText, this);
 	x_control->Bind(wxEVT_KEY_UP, &MainToolBar::OnPositionKeyUp, this);
@@ -189,6 +196,9 @@ MainToolBar::MainToolBar(wxWindow* parent, wxAuiManager* manager) :
 
 MainToolBar::~MainToolBar() {
 	standard_toolbar->Unbind(wxEVT_COMMAND_MENU_SELECTED, &MainToolBar::OnStandardButtonClick, this);
+	if (export_json_button) {
+		export_json_button->Unbind(wxEVT_BUTTON, &MainToolBar::OnExportMapJsonButtonClick, this);
+	}
 	brushes_toolbar->Unbind(wxEVT_COMMAND_MENU_SELECTED, &MainToolBar::OnBrushesButtonClick, this);
 	x_control->Unbind(wxEVT_TEXT_PASTE, &MainToolBar::OnPastePositionText, this);
 	x_control->Unbind(wxEVT_KEY_UP, &MainToolBar::OnPositionKeyUp, this);
@@ -388,6 +398,9 @@ void MainToolBar::UpdateButtons() {
 	standard_toolbar->EnableTool(wxID_SAVEAS, is_host);
 	standard_toolbar->EnableTool(wxID_CUT, has_map);
 	standard_toolbar->EnableTool(wxID_COPY, has_map);
+	if (export_json_button) {
+		export_json_button->Enable(has_map && !editor->IsLiveClient());
+	}
 	
 	brushes_toolbar->EnableTool(PALETTE_TERRAIN_OPTIONAL_BORDER_TOOL, has_map);
 	brushes_toolbar->EnableTool(PALETTE_TERRAIN_ERASER, has_map);
@@ -735,6 +748,10 @@ void MainToolBar::OnStandardButtonClick(wxCommandEvent& event) {
 		default:
 			break;
 	}
+}
+
+void MainToolBar::OnExportMapJsonButtonClick(wxCommandEvent& WXUNUSED(event)) {
+	g_gui.ShowExportMapJsonWindow();
 }
 
 void MainToolBar::OnBrushesButtonClick(wxCommandEvent& event) {

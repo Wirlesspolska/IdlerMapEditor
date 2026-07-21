@@ -144,6 +144,27 @@ GroundBrush::~GroundBrush() {
 	borders.clear();
 }
 
+void GroundBrush::getRelatedBorderItemIds(std::vector<uint16_t>& out) const {
+	auto appendBorderTiles = [&out](const AutoBorder* border) {
+		if (!border) {
+			return;
+		}
+		for (int i = 0; i < 13; ++i) {
+			if (border->tiles[i] != 0) {
+				out.push_back(static_cast<uint16_t>(border->tiles[i]));
+			}
+		}
+	};
+
+	appendBorderTiles(optional_border);
+	for (BorderBlock* block : borders) {
+		if (!block) {
+			continue;
+		}
+		appendBorderTiles(block->autoborder);
+	}
+}
+
 bool GroundBrush::load(pugi::xml_node node, wxArrayString& warnings) {
 	pugi::xml_attribute attribute;
 	if ((attribute = node.attribute("lookid"))) {

@@ -59,6 +59,9 @@ class MapSummaryWindow;
 class MinimapWindow;
 class PaletteWindow;
 class RecentBrushesWindow;
+class ProposedBrushesWindow;
+class ExportMapJsonWindow;
+class MarketplaceWindow;
 class MonsterMakerWindow;
 class OldPropertiesWindow;
 class TilesetWindow;
@@ -250,6 +253,24 @@ public:
 	RecentBrushesWindow* GetRecentBrushesWindow();
 	RecentBrushesWindow* ShowRecentBrushesWindow();
 	void AddRecentBrush(Brush* brush);
+
+	void HideProposedBrushesWindow();
+	ProposedBrushesWindow* GetProposedBrushesWindow();
+	ProposedBrushesWindow* ShowProposedBrushesWindow();
+	void RefreshProposedBrushes();
+
+	void ShowExportMapJsonWindow();
+	ExportMapJsonWindow* GetExportMapJsonWindow() const {
+		return export_map_json_window;
+	}
+	void ClearExportMapJsonWindow();
+	bool TryConsumeMapPositionPick(const Position& pos);
+
+	void ShowMarketplaceWindow();
+	MarketplaceWindow* GetMarketplaceWindow() const {
+		return marketplace_window;
+	}
+	void ClearMarketplaceWindow();
 
 	void HideMapSummaryWindow();
 	
@@ -473,6 +494,9 @@ public:
 	SearchResultWindow* search_result_window;
 	MapSummaryWindow* map_summary_window;
 	RecentBrushesWindow* recent_brushes_window;
+	ProposedBrushesWindow* proposed_brushes_window;
+	ExportMapJsonWindow* export_map_json_window;
+	MarketplaceWindow* marketplace_window;
 	GraphicManager gfx;
 	RevScriptManager revscript_manager;
 	MonsterManager monster_manager;

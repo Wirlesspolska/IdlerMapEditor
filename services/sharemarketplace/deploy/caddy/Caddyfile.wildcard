@@ -1,0 +1,28 @@
+# Wildcard / multi-subdomain mode with on-demand TLS.
+# Caddy asks the app before issuing a cert: GET /v1/tls-ask?domain=...
+{
+	email {$ACME_EMAIL}
+	on_demand_tls {
+		ask http://marketplace:8787/v1/tls-ask
+	}
+}
+
+{$MARKETPLACE_HOST}, *.{$MARKETPLACE_BASE_DOMAIN} {
+	tls {
+		on_demand
+	}
+
+	encode gzip
+	reverse_proxy marketplace:8787
+
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer-when-downgrade
+		-Server
+	}
+
+	log {
+		output stdout
+		format console
+	}
+}

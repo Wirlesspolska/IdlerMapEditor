@@ -178,6 +178,8 @@
 #include "live_tab.h"
 #include "live_server.h"
 #include "recent_brushes_window.h"
+#include "proposed_brushes_window.h"
+#include "marketplace_window.h"
 #include "monster_maker_window.h"
 #include "preferences.h"
 #include "dark_mode_manager.h"
@@ -208,6 +210,9 @@ GUI::GUI() :
 	secondary_map(nullptr),
 	minimap(nullptr),
 	recent_brushes_window(nullptr),
+	proposed_brushes_window(nullptr),
+	export_map_json_window(nullptr),
+	marketplace_window(nullptr),
 	has_last_search(false),
 	last_search_itemid(0),
 	last_search_on_selection(false),
@@ -1853,6 +1858,90 @@ void GUI::AddRecentBrush(Brush* brush) {
 	}
 }
 
+void GUI::HideProposedBrushesWindow() {
+	if (proposed_brushes_window) {
+		aui_manager->GetPane(proposed_brushes_window).Show(false);
+		aui_manager->Update();
+	}
+}
+
+ProposedBrushesWindow* GUI::GetProposedBrushesWindow() {
+	return proposed_brushes_window;
+}
+
+ProposedBrushesWindow* GUI::ShowProposedBrushesWindow() {
+	if (proposed_brushes_window == nullptr) {
+		proposed_brushes_window = newd ProposedBrushesWindow(root);
+
+		wxAuiPaneInfo paneInfo;
+		paneInfo.Caption("Proposed Brush")
+			.Right()
+			.Floatable(true)
+			.Movable(true)
+			.Dockable(true)
+			.Resizable(true)
+			.MinSize(160, 280)
+			.BestSize(200, 480)
+			.DestroyOnClose(false);
+
+		aui_manager->AddPane(proposed_brushes_window, paneInfo);
+	} else {
+		aui_manager->GetPane(proposed_brushes_window).Show();
+	}
+	aui_manager->Update();
+	proposed_brushes_window->RebuildFromCurrentBrush();
+	return proposed_brushes_window;
+}
+
+void GUI::RefreshProposedBrushes() {
+	if (proposed_brushes_window && aui_manager->GetPane(proposed_brushes_window).IsShown()) {
+		proposed_brushes_window->RebuildFromCurrentBrush();
+	}
+}
+
+void GUI::ShowExportMapJsonWindow() {
+	Editor* editor = GetCurrentEditor();
+	if (!editor || editor->IsLiveClient()) {
+		return;
+	}
+
+	if (export_map_json_window) {
+		export_map_json_window->Raise();
+		export_map_json_window->Show();
+		return;
+	}
+
+	export_map_json_window = newd ExportMapJsonWindow(root, *editor);
+	export_map_json_window->Show();
+}
+
+void GUI::ShowMarketplaceWindow() {
+	if (marketplace_window) {
+		marketplace_window->Raise();
+		marketplace_window->Show();
+		marketplace_window->RefreshListings();
+		return;
+	}
+	marketplace_window = newd MarketplaceWindow(root);
+	marketplace_window->Show();
+}
+
+void GUI::ClearMarketplaceWindow() {
+	marketplace_window = nullptr;
+}
+
+void GUI::ClearExportMapJsonWindow() {
+	export_map_json_window = nullptr;
+}
+
+bool GUI::TryConsumeMapPositionPick(const Position& pos) {
+	if (!export_map_json_window || !export_map_json_window->IsPicking()) {
+		return false;
+	}
+	export_map_json_window->SetPickedPosition(pos);
+	return true;
+}
+
 //=============================================================================
 // Monster Maker Window Interface Implementation
 
@@ -2900,6 +2989,7 @@ void GUI::SelectBrushInternal(Brush* brush) {
 
 	SetDrawingMode();
 	RefreshView();
+	RefreshProposedBrushes();
 }
 
 void GUI::SelectPreviousBrush() {

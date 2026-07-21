@@ -1,0 +1,20 @@
+# Generated/selected by deploy.sh — single hostname, HTTP-01 ACME.
+{
+	email {$ACME_EMAIL}
+}
+
+{$MARKETPLACE_HOST} {
+	encode gzip
+	reverse_proxy marketplace:8787
+
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer-when-downgrade
+		-Server
+	}
+
+	log {
+		output stdout
+		format console
+	}
+}
